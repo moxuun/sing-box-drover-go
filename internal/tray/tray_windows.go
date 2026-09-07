@@ -392,6 +392,10 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 	if menu == 0 {
 		return 0, fmt.Errorf("CreatePopupMenu: %w", err)
 	}
+	if !useSharedCheckAndBitmapColumn(menu) {
+		destroyMenu.Call(menu)
+		return 0, errors.New("SetMenuInfo: unable to configure check mark and bitmap column")
+	}
 	t.selectors = map[uint32]selectorAction{}
 	appendText := func(flags uint32, id uint32, text string) error {
 		ptr, err := winapi.UTF16PtrFromString(text)
@@ -425,12 +429,17 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 		appendMenu.Call(menu, mfSeparator, 0, 0)
 		nested := clash.UseNested(t.controller.Options().SelectorMenuLayout, selectors)
 		id := uint32(cmdSelectorBase)
-		bitmapCache := map[string]uintptr{}
+		bitmapCache := map[selectorBitmapKey]uintptr{}
 		for _, selector := range selectors {
 			if nested {
 				submenu, _, _ := createPopupMenu.Call()
 				if submenu == 0 {
 					continue
+				}
+				if !useSharedCheckAndBitmapColumn(submenu) {
+					destroyMenu.Call(submenu)
+					destroyMenu.Call(menu)
+					return 0, errors.New("SetMenuInfo: unable to configure submenu check mark and bitmap column")
 				}
 				for _, value := range selector.All {
 					flags := uint32(mfString)

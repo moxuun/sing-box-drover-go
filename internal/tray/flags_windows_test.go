@@ -30,6 +30,91 @@ func TestCreateFlagBitmap(t *testing.T) {
 	deleteObject.Call(bitmap)
 }
 
+func TestCreateSelectorBitmap(t *testing.T) {
+	checkWidth, checkHeight := menuCheckDimensions()
+	width := checkWidth + bitmapGap + flagWidth
+	height := checkHeight
+	if height < flagHeight {
+		height = flagHeight
+	}
+	info := bitmapInfo{
+		header: bitmapInfoHeader{
+			size:        uint32(unsafe.Sizeof(bitmapInfoHeader{})),
+			width:       int32(width),
+			height:      -int32(height),
+			planes:      1,
+			bitCount:    32,
+			compression: biRGB,
+		},
+	}
+	for _, checked := range []bool{false, true} {
+		bitmap := createSelectorBitmap("US", checked)
+		if bitmap == 0 {
+			t.Fatalf("createSelectorBitmap(checked=%t) returned a null HBITMAP", checked)
+		}
+		pixels := make([]uint32, width*height)
+		dc, _, _ := createCompatibleDC.Call(0)
+		if dc == 0 {
+			deleteObject.Call(bitmap)
+			t.Fatal("CreateCompatibleDC failed for selector bitmap")
+		}
+		if result, _, _ := getDIBits.Call(
+			dc,
+			bitmap,
+			0,
+			uintptr(height),
+			uintptr(unsafe.Pointer(&pixels[0])),
+			uintptr(unsafe.Pointer(&info)),
+			dibRGBColors,
+		); result == 0 {
+			deleteDC.Call(dc)
+			deleteObject.Call(bitmap)
+			t.Fatal("GetDIBits failed for selector bitmap")
+		}
+		deleteDC.Call(dc)
+		background := menuColor()
+		checkPixels := 0
+		for y := 0; y < checkHeight; y++ {
+			for x := 0; x < checkWidth; x++ {
+				if pixels[y*width+x] != background {
+					checkPixels++
+				}
+			}
+		}
+		if checked && checkPixels == 0 {
+			deleteObject.Call(bitmap)
+			t.Fatal("checked selector bitmap has no check pixels")
+		}
+		if !checked && checkPixels != 0 {
+			deleteObject.Call(bitmap)
+			t.Fatalf("unchecked selector bitmap has %d check-column pixels", checkPixels)
+		}
+		deleteObject.Call(bitmap)
+	}
+}
+
+func TestUseSharedCheckAndBitmapColumn(t *testing.T) {
+	menu, _, _ := createPopupMenu.Call()
+	if menu == 0 {
+		t.Fatal("CreatePopupMenu returned a null HMENU")
+	}
+	defer destroyMenu.Call(menu)
+
+	if !useSharedCheckAndBitmapColumn(menu) {
+		t.Fatal("useSharedCheckAndBitmapColumn failed")
+	}
+	info := menuInfo{
+		cbSize: uint32(unsafe.Sizeof(menuInfo{})),
+		fMask:  mimStyle,
+	}
+	if ok, _, _ := getMenuInfo.Call(menu, uintptr(unsafe.Pointer(&info))); ok == 0 {
+		t.Fatal("GetMenuInfo failed after configuring popup")
+	}
+	if info.dwStyle&mnsCheckOrBmp == 0 {
+		t.Fatalf("MNS_CHECKORBMP is not enabled: %#x", info.dwStyle)
+	}
+}
+
 func TestSetMenuItemBitmap(t *testing.T) {
 	menu, _, _ := createPopupMenu.Call()
 	if menu == 0 {
