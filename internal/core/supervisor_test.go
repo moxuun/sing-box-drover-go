@@ -94,19 +94,12 @@ func TestSupervisorReportsUnexpectedExitWithBoundedDiagnostics(t *testing.T) {
 	supervisor := NewSupervisor(script, nil)
 	supervisor.SetHandler(func(event Event) { events <- event })
 	defer supervisor.Close()
-	if err := supervisor.Start(`{"inbounds":[]}`); err != nil {
-		t.Fatal(err)
+	err := supervisor.Start(`{"inbounds":[]}`)
+	if err == nil || !strings.Contains(err.Error(), "FATAL bad configuration") {
+		t.Fatalf("startup error = %v, want captured fatal output", err)
 	}
-	deadline := time.After(2 * time.Second)
-	for {
-		if supervisor.State() == StateFailed {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("supervisor did not report failure; state=%v output=%q", supervisor.State(), supervisor.LastOutput())
-		case <-time.After(10 * time.Millisecond):
-		}
+	if supervisor.State() != StateFailed {
+		t.Fatalf("supervisor state = %v, want failed", supervisor.State())
 	}
 	if output := supervisor.LastOutput(); !strings.Contains(output, "FATAL bad configuration") {
 		t.Fatalf("missing crash output: %q", output)

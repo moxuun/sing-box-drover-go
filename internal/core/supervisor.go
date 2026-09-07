@@ -15,6 +15,8 @@ import (
 
 const MaxCapturedOutput = 8 << 10
 
+const startupGracePeriod = 750 * time.Millisecond
+
 type State int
 
 const (
@@ -168,12 +170,27 @@ func (s *Supervisor) Start(configJSON string) error {
 	gen := s.gen
 	done := s.done
 	s.mu.Unlock()
-	s.setState(StateRunning, "sing-box running")
-	go s.wait(gen, cmd, done)
-	return nil
+	startupExit := make(chan error, 1)
+	go s.wait(gen, cmd, done, startupExit)
+	timer := time.NewTimer(startupGracePeriod)
+	defer timer.Stop()
+	select {
+	case err := <-startupExit:
+		message := "sing-box stopped during startup"
+		if err != nil {
+			message = "sing-box failed during startup: " + err.Error()
+		}
+		if output := strings.TrimSpace(s.LastOutput()); output != "" {
+			message += "\n" + criticalOutput(output)
+		}
+		return errors.New(message)
+	case <-timer.C:
+		s.setState(StateRunning, "sing-box running")
+		return nil
+	}
 }
 
-func (s *Supervisor) wait(gen uint64, cmd *exec.Cmd, done chan struct{}) {
+func (s *Supervisor) wait(gen uint64, cmd *exec.Cmd, done chan struct{}, startupExit chan<- error) {
 	err := cmd.Wait()
 	s.mu.Lock()
 	if gen != s.gen {
@@ -197,6 +214,9 @@ func (s *Supervisor) wait(gen uint64, cmd *exec.Cmd, done chan struct{}) {
 		s.setState(StateStopped, "sing-box stopped")
 	}
 	close(done)
+	if startupExit != nil {
+		startupExit <- err
+	}
 }
 
 func criticalOutput(output string) string {
