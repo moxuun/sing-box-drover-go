@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -167,6 +168,19 @@ func Run(controller *app.App) error {
 	if controller == nil {
 		return errors.New("controller is nil")
 	}
+	return runOnTrayThread(func() error { return run(controller) })
+}
+
+func runOnTrayThread(run func() error) error {
+	// Win32 binds each HWND and its message queue to the creating OS thread.
+	// Keep that thread for the whole window/message-loop lifetime; otherwise
+	// the goroutine may migrate after CreateWindowEx and pump a different queue.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	return run()
+}
+
+func run(controller *app.App) error {
 	tray, err := newTray(controller)
 	if err != nil {
 		return err
