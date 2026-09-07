@@ -178,19 +178,8 @@ func NewAt(executable string, args []string) (*App, error) {
 		return nil, ErrAlreadyRunning
 	}
 	logger := logging.New(options.LogFile)
-	source, err := config.ReadConfigSource(options.SBConfigFile)
+	source, sbConfig, err := config.ReadValidatedConfig(options.SBConfigFile)
 	if err != nil {
-		instance.Close()
-		logger.Close()
-		return nil, err
-	}
-	sbConfig, err := config.ReadSingBoxConfig(source.JSONText)
-	if err != nil {
-		instance.Close()
-		logger.Close()
-		return nil, err
-	}
-	if err := config.CheckSingBoxConfig(sbConfig); err != nil {
 		instance.Close()
 		logger.Close()
 		return nil, err
@@ -269,6 +258,8 @@ func applyPersistedStatic(selectors []clash.Selector, saved *state.File) {
 }
 
 func (a *App) runtimeConfig(tun bool) string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	if tun {
 		return a.config.JSONWithTUN
 	}
@@ -282,7 +273,10 @@ func (a *App) handleCoreEvent(event core.Event) {
 		}
 	}
 	a.emit(Event{Kind: event.Kind, State: event.State, Message: event.Message})
-	if event.State == core.StateRunning && a.api != nil {
+	a.mu.RLock()
+	apiConfigured := a.api != nil
+	a.mu.RUnlock()
+	if event.State == core.StateRunning && apiConfigured {
 		a.startAPIPoll()
 	} else if event.State != core.StateRunning {
 		a.stopAPIPoll()
@@ -372,7 +366,11 @@ func (a *App) Selectors() []clash.Selector {
 	return cloneSelectors(a.selectors)
 }
 
-func (a *App) HasTunInbound() bool { return a.config.HasTunInbound }
+func (a *App) HasTunInbound() bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.config.HasTunInbound
+}
 func (a *App) TunActive() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -513,7 +511,10 @@ func (a *App) SwitchSelector(ctx context.Context, selectorName, value string) er
 }
 
 func (a *App) EnableSystemProxy() error {
-	if err := platform.EnableSystemProxy(a.config.ProxyHost, a.config.ProxyPort); err != nil {
+	a.mu.RLock()
+	host, port := a.config.ProxyHost, a.config.ProxyPort
+	a.mu.RUnlock()
+	if err := platform.EnableSystemProxy(host, port); err != nil {
 		return err
 	}
 	a.mu.Lock()
@@ -552,34 +553,14 @@ func (a *App) disableSystemProxyIfActive() error {
 func (a *App) ToggleTun(enabled bool) error {
 	a.selectorMu.Lock()
 	defer a.selectorMu.Unlock()
-	if !a.config.HasTunInbound {
-		return errors.New("TUN inbound is not configured")
-	}
-	if enabled && !platform.IsProcessElevated() {
-		return platform.ErrElevationRequired
-	}
-	a.resetRestoration()
-	if err := a.supervisor.Start(a.runtimeConfig(enabled)); err != nil {
-		return err
-	}
-	a.mu.Lock()
-	a.tunActive = enabled
-	a.mu.Unlock()
-	return nil
+	return a.restartWithConfig(enabled, enabled)
 }
 
 func (a *App) Restart() error {
 	a.selectorMu.Lock()
 	defer a.selectorMu.Unlock()
 	tun := a.TunActive()
-	if tun && !platform.IsProcessElevated() {
-		return platform.ErrElevationRequired
-	}
-	a.resetRestoration()
-	if err := a.supervisor.Start(a.runtimeConfig(tun)); err != nil {
-		return err
-	}
-	return nil
+	return a.restartWithConfig(tun, false)
 }
 
 func (a *App) resetRestoration() {

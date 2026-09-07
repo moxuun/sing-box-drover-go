@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"time"
 )
+
+var errBPFUpdaterInactive = errors.New("BPF auto-update is no longer active")
 
 const (
 	InitialUpdateDelay    = time.Minute
@@ -44,6 +47,19 @@ func (u *BPFUpdater) logf(format string, args ...any) {
 }
 
 func (u *BPFUpdater) update(ctx context.Context) error {
+	if strings.TrimSpace(u.Path) != "" {
+		source, err := ReadConfigSource(u.Path)
+		if err != nil {
+			return err
+		}
+		if !source.IsBPF() || !source.BPFProfile.IsRemote() || !source.BPFProfile.AutoUpdate || strings.TrimSpace(source.BPFProfile.RemotePath) == "" {
+			return errBPFUpdaterInactive
+		}
+		u.Profile = source.BPFProfile
+	}
+	if !u.Profile.IsRemote() || !u.Profile.AutoUpdate || strings.TrimSpace(u.Profile.RemotePath) == "" {
+		return errBPFUpdaterInactive
+	}
 	client := u.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil}}
@@ -125,6 +141,9 @@ func (u *BPFUpdater) Run(ctx context.Context) {
 	}
 	for {
 		if err := u.update(ctx); err != nil {
+			if errors.Is(err, errBPFUpdaterInactive) {
+				return
+			}
 			u.logf("config update failed: %v", err)
 		} else {
 			u.logf("config updated successfully at %s", strconv.FormatInt(u.Profile.LastUpdated, 10))

@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,5 +40,27 @@ func TestBPFUpdaterValidatesAndAtomicallyReplacesProfile(t *testing.T) {
 	}
 	if !loaded.IsBPF() || loaded.BPFProfile.ConfigJSON != u.Profile.ConfigJSON {
 		t.Fatalf("replacement mismatch: %#v", loaded)
+	}
+}
+
+func TestBPFUpdaterStopsWhenSourceDisablesAutoUpdate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	write := []byte(`{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":1080}]}`)
+	if err := os.WriteFile(path, write, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	u := &BPFUpdater{
+		Path: path,
+		Profile: CreateRemoteBPF(
+			string(write),
+			"demo",
+			"https://example.test/config.json",
+			true,
+			15,
+			0,
+		),
+	}
+	if err := u.update(context.Background()); !errors.Is(err, errBPFUpdaterInactive) {
+		t.Fatalf("update error = %v, want inactive updater", err)
 	}
 }
