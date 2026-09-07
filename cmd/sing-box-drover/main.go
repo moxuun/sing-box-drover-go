@@ -10,6 +10,7 @@ import (
 )
 
 func main() {
+	platform.EnableDPIAwareness()
 	controller, err := app.New(os.Args[1:])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "sing-box-drover:", err)
