@@ -157,6 +157,7 @@ type Tray struct {
 	className        *uint16
 	icon             uintptr
 	selectors        map[uint32]selectorAction
+	menuBitmaps      []uintptr
 	notifyVersion4   bool
 	eventGate        trayEventGate
 	autostartEnabled bool
@@ -273,6 +274,7 @@ func (t *Tray) close() {
 			instance, _, _ := getModuleHandle.Call(0)
 			_, _, _ = unregisterClass.Call(uintptr(unsafe.Pointer(t.className)), instance)
 		}
+		t.releaseMenuBitmaps()
 		_ = t.controller.Close()
 	})
 }
@@ -367,7 +369,10 @@ func (t *Tray) showMenuAt(anchor *point) {
 		t.balloon(err.Error(), "Error", true)
 		return
 	}
-	defer destroyMenu.Call(menu)
+	defer func() {
+		destroyMenu.Call(menu)
+		t.releaseMenuBitmaps()
+	}()
 	var cursor point
 	if anchor != nil {
 		cursor = *anchor
@@ -420,6 +425,7 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 		appendMenu.Call(menu, mfSeparator, 0, 0)
 		nested := clash.UseNested(t.controller.Options().SelectorMenuLayout, selectors)
 		id := uint32(cmdSelectorBase)
+		bitmapCache := map[string]uintptr{}
 		for _, selector := range selectors {
 			if nested {
 				submenu, _, _ := createPopupMenu.Call()
@@ -431,8 +437,7 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 					if value == selector.Now {
 						flags |= mfChecked
 					}
-					ptr, _ := winapi.UTF16PtrFromString(value)
-					appendMenu.Call(submenu, uintptr(flags), uintptr(id), uintptr(unsafe.Pointer(ptr)))
+					t.appendSelectorItem(submenu, flags, id, value, bitmapCache)
 					t.selectors[id] = selectorAction{selector: selector.Name, value: value}
 					id++
 				}
@@ -446,8 +451,7 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 					if value == selector.Now {
 						flags |= mfChecked
 					}
-					option, _ := winapi.UTF16PtrFromString(value)
-					appendMenu.Call(menu, uintptr(flags), uintptr(id), uintptr(unsafe.Pointer(option)))
+					t.appendSelectorItem(menu, flags, id, value, bitmapCache)
 					t.selectors[id] = selectorAction{selector: selector.Name, value: value}
 					id++
 				}

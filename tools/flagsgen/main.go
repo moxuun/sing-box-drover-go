@@ -1,0 +1,226 @@
+//go:build ignore
+
+// flagsgen turns the Twemoji flag PNGs into the small fixed-size asset used by
+// the native Windows selector menu. It intentionally has no third-party
+// dependencies so the asset can be refreshed with the pinned Go toolchain.
+package main
+
+import (
+	"bytes"
+	"encoding/binary"
+	"flag"
+	"fmt"
+	"go/format"
+	"image"
+	"image/color"
+	_ "image/png"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+const (
+	tileWidth  = 18
+	tileHeight = 12
+)
+
+type flagAsset struct {
+	code   string
+	pixels []byte
+}
+
+func main() {
+	sourceDir := flag.String("src", "", "directory containing Twemoji 72x72 PNGs")
+	assetPath := flag.String("out", "", "output flags.dat path")
+	codesPath := flag.String("codes", "", "output generated Go code path")
+	flag.Parse()
+	if *sourceDir == "" || *assetPath == "" || *codesPath == "" {
+		fail("-src, -out and -codes are required")
+	}
+
+	assets := readAssets(*sourceDir)
+	if len(assets) == 0 {
+		fail("no regional-indicator flag PNGs found in %s", *sourceDir)
+	}
+	if err := writeAssetFile(*assetPath, assets); err != nil {
+		fail("write asset file: %v", err)
+	}
+	if err := writeCodesFile(*codesPath, assets); err != nil {
+		fail("write codes file: %v", err)
+	}
+	fmt.Printf("generated %d flags (%dx%d)\n", len(assets), tileWidth, tileHeight)
+}
+
+func readAssets(root string) []flagAsset {
+	byCode := make(map[string]flagAsset)
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".png") {
+			return nil
+		}
+		code, ok := codeFromFilename(entry.Name())
+		if !ok {
+			return nil
+		}
+		pixels, err := renderTile(path)
+		if err != nil {
+			return fmt.Errorf("decode %s: %w", path, err)
+		}
+		byCode[code] = flagAsset{code: code, pixels: pixels}
+		return nil
+	})
+	if err != nil {
+		fail("read source assets: %v", err)
+	}
+
+	assets := make([]flagAsset, 0, len(byCode))
+	for _, asset := range byCode {
+		assets = append(assets, asset)
+	}
+	sort.Slice(assets, func(i, j int) bool { return assets[i].code < assets[j].code })
+	return assets
+}
+
+func codeFromFilename(name string) (string, bool) {
+	name = strings.TrimSuffix(name, filepath.Ext(name))
+	parts := strings.Split(name, "-")
+	if len(parts) != 2 {
+		return "", false
+	}
+	var code [2]byte
+	for i, part := range parts {
+		value, err := strconv.ParseUint(part, 16, 32)
+		if err != nil || value < 0x1f1e6 || value > 0x1f1ff {
+			return "", false
+		}
+		code[i] = byte('A' + value - 0x1f1e6)
+	}
+	return string(code[:]), true
+}
+
+func renderTile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	imageData, _, err := image.Decode(file)
+	if err != nil {
+		return nil, err
+	}
+	bounds := imageData.Bounds()
+	minX, minY := bounds.Max.X, bounds.Max.Y
+	maxX, maxY := bounds.Min.X, bounds.Min.Y
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			_, _, _, alpha := imageData.At(x, y).RGBA()
+			if alpha == 0 {
+				continue
+			}
+			if x < minX {
+				minX = x
+			}
+			if y < minY {
+				minY = y
+			}
+			if x+1 > maxX {
+				maxX = x + 1
+			}
+			if y+1 > maxY {
+				maxY = y + 1
+			}
+		}
+	}
+	if minX >= maxX || minY >= maxY {
+		return nil, fmt.Errorf("image has no visible pixels")
+	}
+
+	width, height := maxX-minX, maxY-minY
+	scale := float64(tileWidth) / float64(width)
+	if candidate := float64(tileHeight) / float64(height); candidate < scale {
+		scale = candidate
+	}
+	destWidth := max(1, int(float64(width)*scale+0.5))
+	destHeight := max(1, int(float64(height)*scale+0.5))
+	offsetX := (tileWidth - destWidth) / 2
+	offsetY := (tileHeight - destHeight) / 2
+
+	pixels := make([]byte, tileWidth*tileHeight*4)
+	for y := 0; y < destHeight; y++ {
+		sourceY := minY + min(height-1, int(float64(y)/scale))
+		for x := 0; x < destWidth; x++ {
+			sourceX := minX + min(width-1, int(float64(x)/scale))
+			pixel := color.NRGBAModel.Convert(imageData.At(sourceX, sourceY)).(color.NRGBA)
+			destination := ((offsetY+y)*tileWidth + offsetX + x) * 4
+			pixels[destination] = pixel.R
+			pixels[destination+1] = pixel.G
+			pixels[destination+2] = pixel.B
+			pixels[destination+3] = pixel.A
+		}
+	}
+	return pixels, nil
+}
+
+func writeAssetFile(path string, assets []flagAsset) error {
+	var data bytes.Buffer
+	data.WriteString("SBD1")
+	data.WriteByte(1)
+	data.WriteByte(tileWidth)
+	data.WriteByte(tileHeight)
+	data.WriteByte(0)
+	if err := binary.Write(&data, binary.LittleEndian, uint16(len(assets))); err != nil {
+		return err
+	}
+	for _, asset := range assets {
+		data.WriteString(asset.code)
+		data.Write(asset.pixels)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data.Bytes(), 0644)
+}
+
+func writeCodesFile(path string, assets []flagAsset) error {
+	var source bytes.Buffer
+	source.WriteString("// Code generated by tools/flagsgen; DO NOT EDIT.\n\n")
+	source.WriteString("package tray\n\n")
+	source.WriteString("var knownFlagCodes = map[string]struct{}{\n")
+	for _, asset := range assets {
+		fmt.Fprintf(&source, "\t%q: {},\n", asset.code)
+	}
+	source.WriteString("}\n")
+	formatted, err := format.Source(source.Bytes())
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, formatted, 0644)
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func fail(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	os.Exit(1)
+}

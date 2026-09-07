@@ -1,0 +1,6 @@
+The bundled flag pixels are derived from Twemoji.
+
+Source: https://github.com/jdecked/twemoji
+Source commit: b6b55fef1e8636b540a6d016a4729ca8cdf2e60d
+Graphics license: CC-BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+Code license: MIT
