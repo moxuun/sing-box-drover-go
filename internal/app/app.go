@@ -130,6 +130,10 @@ type App struct {
 	updateStop    context.CancelFunc
 	apiPollCancel context.CancelFunc
 	events        chan Event
+
+	// systemProxyDisabler is kept injectable so core-failure cleanup can be
+	// tested without calling the Windows Internet settings API.
+	systemProxyDisabler func() error
 }
 
 func New(args []string) (*App, error) {
@@ -272,6 +276,11 @@ func (a *App) runtimeConfig(tun bool) string {
 }
 
 func (a *App) handleCoreEvent(event core.Event) {
+	if event.State == core.StateFailed {
+		if err := a.disableSystemProxyIfActive(); err != nil {
+			a.logger.Log("SystemProxy", "failed to disable after core failure: "+err.Error())
+		}
+	}
 	a.emit(Event{Kind: event.Kind, State: event.State, Message: event.Message})
 	if event.State == core.StateRunning && a.api != nil {
 		a.startAPIPoll()
@@ -520,6 +529,23 @@ func (a *App) DisableSystemProxy() error {
 	a.mu.Lock()
 	a.proxyActive = false
 	a.mu.Unlock()
+	return nil
+}
+
+func (a *App) disableSystemProxyIfActive() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.proxyActive {
+		return nil
+	}
+	disable := a.systemProxyDisabler
+	if disable == nil {
+		disable = platform.DisableSystemProxy
+	}
+	if err := disable(); err != nil {
+		return err
+	}
+	a.proxyActive = false
 	return nil
 }
 

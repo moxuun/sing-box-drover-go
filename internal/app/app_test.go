@@ -11,6 +11,7 @@ import (
 
 	"sing-box-drover/internal/clash"
 	"sing-box-drover/internal/config"
+	"sing-box-drover/internal/core"
 	"sing-box-drover/internal/state"
 	platform "sing-box-drover/internal/windows"
 )
@@ -195,5 +196,67 @@ func TestAPIPollCancellationStopsStaleRetryAndRestore(t *testing.T) {
 	got := a.Selectors()
 	if len(got) != 1 || got[0].Name != "cached" || got[0].Now != "old" {
 		t.Fatalf("superseded readiness poll changed the selector cache: %#v", got)
+	}
+}
+
+func TestCoreFailureDisablesActiveProxyWithoutChangingTunState(t *testing.T) {
+	called := false
+	a := &App{
+		proxyActive: true,
+		tunActive:   true,
+		systemProxyDisabler: func() error {
+			called = true
+			return nil
+		},
+		events: make(chan Event, 1),
+	}
+
+	a.handleCoreEvent(core.Event{Kind: core.EventState, State: core.StateFailed, Message: "core exited"})
+
+	if !called {
+		t.Fatal("core failure did not disable the active system proxy")
+	}
+	if a.SystemProxyActive() {
+		t.Fatal("system proxy state remained active after successful cleanup")
+	}
+	if !a.TunActive() {
+		t.Fatal("core failure unexpectedly changed independent TUN state")
+	}
+}
+
+func TestCoreFailureDoesNotDisableInactiveProxy(t *testing.T) {
+	called := false
+	a := &App{
+		systemProxyDisabler: func() error {
+			called = true
+			return nil
+		},
+		events: make(chan Event, 1),
+	}
+
+	a.handleCoreEvent(core.Event{Kind: core.EventState, State: core.StateFailed, Message: "core failed to start"})
+
+	if called {
+		t.Fatal("core failure disabled a proxy that the controller had not enabled")
+	}
+	if a.SystemProxyActive() {
+		t.Fatal("inactive proxy state changed")
+	}
+}
+
+func TestCoreFailureKeepsProxyStateWhenCleanupFails(t *testing.T) {
+	want := errors.New("settings update failed")
+	a := &App{
+		proxyActive: true,
+		systemProxyDisabler: func() error {
+			return want
+		},
+		events: make(chan Event, 1),
+	}
+
+	a.handleCoreEvent(core.Event{Kind: core.EventState, State: core.StateFailed, Message: "core exited"})
+
+	if !a.SystemProxyActive() {
+		t.Fatal("proxy state was cleared even though system cleanup failed")
 	}
 }
