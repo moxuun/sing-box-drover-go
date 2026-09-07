@@ -1,0 +1,14 @@
+# Local runtime files
+/cache.db
+/config.json
+/dashboard/
+/providers/
+/*.bpf
+/*.dll
+/sing-box.exe
+/sing-box-drover.exe
+/sing-box-drover.log
+/sing-box-drover.state.json
+
+# Temporary files
+*.tmp
