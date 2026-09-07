@@ -2,6 +2,9 @@
 /output/*
 !/output/.gitkeep
 
+# Local Codex instructions
+/AGENTS.md
+
 # Local runtime files
 /cache.db
 /config.json

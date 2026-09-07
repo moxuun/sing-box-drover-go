@@ -1,0 +1,76 @@
+name: 自动构建并发布
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 构建 Windows amd64 发布包
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Go 1.25.6
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.6"
+          cache: true
+
+      - name: 检查格式
+        shell: pwsh
+        run: |
+          $files = gofmt -l cmd internal tools
+          if ($files) {
+            Write-Host "以下文件未经过 gofmt："
+            $files
+            exit 1
+          }
+
+      - name: 运行测试
+        shell: pwsh
+        run: go test -count=1 ./...
+
+      - name: 运行静态检查
+        shell: pwsh
+        run: go vet ./...
+
+      - name: 构建程序
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          $env:CGO_ENABLED = "0"
+          go build -trimpath -ldflags="-s -w -H=windowsgui" -o build\sing-box-dover-go.exe .\cmd\sing-box-drover
+
+      - name: 打包
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = $env:GITHUB_REF_NAME
+          $stage = Join-Path $env:RUNNER_TEMP "sing-box-dover-go-$version"
+          $package = Join-Path $env:GITHUB_WORKSPACE "sing-box-dover-go-$version-windows-amd64.zip"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item build\sing-box-dover-go.exe $stage
+          Copy-Item examples\sing-box-drover.ini (Join-Path $stage "sing-box-drover.ini")
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $package -Force
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $package).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path -Leaf $package)" | Set-Content -NoNewline -Encoding ascii "$package.sha256"
+          "PACKAGE=$package" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CHECKSUM=$package.sha256" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: 创建 GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          gh release create $tag $env:PACKAGE $env:CHECKSUM --verify-tag --title "sing-box-dover-go $tag" --generate-notes
