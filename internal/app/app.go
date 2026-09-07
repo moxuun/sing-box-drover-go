@@ -215,6 +215,18 @@ func NewAt(executable string, args []string) (*App, error) {
 	app.supervisor.SetHandler(func(event core.Event) {
 		app.handleCoreEvent(event)
 	})
+	if flags.AutostartEnable || flags.AutostartDisable {
+		enabled := flags.AutostartEnable
+		if err := app.SetAutostart(enabled); err != nil {
+			_ = app.Close()
+			return nil, fmt.Errorf("autostart update failed: %w", err)
+		}
+		status := "disabled"
+		if enabled {
+			status = "enabled"
+		}
+		logger.Log("Autostart", "autostart "+status)
+	}
 	app.tunActive = sbConfig.HasTunInbound && platform.IsProcessElevated() && (flags.Tun || options.TunStartMode == "on")
 	if err := app.supervisor.Start(app.runtimeConfig(app.tunActive)); err != nil {
 		app.Close()

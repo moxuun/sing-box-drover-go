@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"strings"
 	"syscall"
 )
@@ -23,7 +24,7 @@ const taskName = "sing-box-drover"
 
 func taskMissing(output []byte) bool {
 	message := strings.ToLower(string(output))
-	for _, phrase := range []string{"does not exist", "cannot find", "not found", "不存在", "找不到"} {
+	for _, phrase := range []string{"does not exist", "cannot find", "not found", "system cannot find the path", "不存在", "找不到"} {
 		if strings.Contains(message, phrase) {
 			return true
 		}
@@ -69,11 +70,23 @@ func SetAutostart(enabled bool) error {
 	if err != nil {
 		return err
 	}
+	currentUser, err := user.Current()
+	if err != nil {
+		return fmt.Errorf("resolve current user: %w", err)
+	}
+	if strings.TrimSpace(currentUser.Username) == "" {
+		return fmt.Errorf("resolve current user: empty username")
+	}
 	// schtasks expects a single /TR string. Double quotes preserve paths with
 	// spaces while allowing the task action to remain the executable itself.
 	tr := `"` + strings.ReplaceAll(file, `"`, `\"`) + `"`
-	if out, err := runTaskScheduler("/Create", "/TN", taskName, "/SC", "ONLOGON", "/RL", "HIGHEST", "/TR", tr, "/F"); err != nil {
+	if out, err := runTaskScheduler("/Create", "/TN", taskName, "/SC", "ONLOGON", "/RU", currentUser.Username, "/IT", "/RL", "HIGHEST", "/TR", tr, "/F"); err != nil {
 		return fmt.Errorf("register task: %w (%s)", err, bytes.TrimSpace(out))
+	}
+	if state, err := QueryAutostart(); err != nil {
+		return fmt.Errorf("verify task: %w", err)
+	} else if state != AutostartEnabled {
+		return fmt.Errorf("verify task: task is not enabled")
 	}
 	return nil
 }

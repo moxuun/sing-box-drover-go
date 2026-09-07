@@ -42,3 +42,7 @@ provider 展开的节点；当前 `now` 项会被勾选。选择节点后，控�
 开机启动和其他特权操作仅在需要时请求提权。子内核无控制台窗口，受 Windows
 Job Object 管理；程序会监控异常退出，并在强制终止前先尝试用 Ctrl+C 正常
 关闭内核。
+
+“Start with Windows” 使用任务计划程序中的 `sing-box-drover` 任务，不是“设置 → 应用 →
+启动”里的注册表启动项，因此不会出现在那个列表中。可在任务计划程序根目录检查它，或运行
+`schtasks /Query /TN sing-box-drover /FO LIST /V`。

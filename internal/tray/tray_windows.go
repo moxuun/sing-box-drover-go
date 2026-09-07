@@ -192,13 +192,6 @@ func run(controller *app.App) error {
 			tray.balloon("System proxy could not be enabled: "+err.Error(), "Error", true)
 		}
 	}
-	flags := controller.Flags()
-	if flags.AutostartEnable || flags.AutostartDisable {
-		enabled := flags.AutostartEnable
-		if err := controller.SetAutostart(enabled); err != nil {
-			tray.balloon("Autostart update failed: "+err.Error(), "Error", true)
-		}
-	}
 	go tray.watchEvents()
 	if state, err := controller.QueryAutostart(); err == nil {
 		tray.autostartEnabled = state == platform.AutostartEnabled
