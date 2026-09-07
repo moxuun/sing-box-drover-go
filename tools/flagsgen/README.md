@@ -1,11 +1,9 @@
-# Flag asset generator
+# 旗帜资源生成器
 
-The tray embeds a small fixed-size atlas generated from Twemoji's `assets/72x72`
-flag PNGs. The generator uses only the Go standard library and does not run at
-application startup.
+托盘内置一份小型定尺寸图集，由 Twemoji 的 `assets/72x72` 旗帜 PNG 生成。
+生成器只使用 Go 标准库，也不会在应用启动时运行。
 
-To refresh the pinned source, download the source tree and run from the
-repository root:
+需要更新固定版本的资源时，下载 Twemoji 源码并在本仓库根目录执行：
 
 ```text
 go run tools/flagsgen/main.go `
@@ -14,5 +12,5 @@ go run tools/flagsgen/main.go `
   -codes internal/tray/flags_codes.go
 ```
 
-The checked-in atlas is 18x12 pixels per flag. The source and attribution are
-recorded in `internal/tray/assets/NOTICE-TWEMOJI.txt`.
+仓库中的图集将每面旗帜保存为 18×12 像素。来源与授权说明记录在
+`internal/tray/assets/NOTICE-TWEMOJI.txt`。

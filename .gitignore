@@ -1,3 +1,7 @@
+# Build output
+/output/*
+!/output/.gitkeep
+
 # Local runtime files
 /cache.db
 /config.json
@@ -5,10 +9,11 @@
 /providers/
 /*.bpf
 /*.dll
-/sing-box.exe
-/sing-box-drover.exe
+/*.exe
+/sing-box-drover.ini
 /sing-box-drover.log
 /sing-box-drover.state.json
 
 # Temporary files
+/.tmp-*/
 *.tmp
