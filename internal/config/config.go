@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -56,6 +57,7 @@ type SingBoxConfig struct {
 type Options struct {
 	SBDir              string
 	SBConfigFile       string
+	HomepageURL        string
 	TunStartMode       string
 	SystemProxyAuto    bool
 	SelectorMenuLayout string
@@ -64,8 +66,18 @@ type Options struct {
 	BaseDir            string
 }
 
+const defaultHomepageURL = "https://github.com/hdrover/sing-box-drover"
+
 func DefaultOptions() Options {
-	return Options{SBConfigFile: "config.json", TunStartMode: "off", SelectorMenuLayout: "auto", SelectorPersist: true}
+	return Options{SBConfigFile: "config.json", HomepageURL: defaultHomepageURL, TunStartMode: "off", SelectorMenuLayout: "auto", SelectorPersist: true}
+}
+
+func validateHomepageURL(value string) error {
+	u, err := url.Parse(value)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("invalid homepage-url: %q (use an http:// or https:// URL)", value)
+	}
+	return nil
 }
 
 func parseBool(value string, fallback bool) bool {
@@ -116,6 +128,15 @@ func LoadOptions(path string) (Options, error) {
 			o.SBDir = value
 		case "sb-config-file":
 			o.SBConfigFile = value
+		case "homepage-url":
+			if value == "" {
+				o.HomepageURL = defaultHomepageURL
+				break
+			}
+			if err := validateHomepageURL(value); err != nil {
+				return o, err
+			}
+			o.HomepageURL = value
 		case "tun-start-mode":
 			if strings.EqualFold(value, "off") || value == "0" || value == "" {
 				o.TunStartMode = "off"

@@ -498,7 +498,7 @@ func (t *Tray) handleCommand(command uint32) {
 			t.autostartEnabled = !t.autostartEnabled
 		}
 	case cmdHomepage:
-		openURL("https://github.com/hdrover/sing-box-drover")
+		openURL(t.controller.Options().HomepageURL)
 	case cmdQuit:
 		postQuitMessage.Call(0)
 	default:

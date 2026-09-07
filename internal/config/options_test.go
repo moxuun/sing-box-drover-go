@@ -20,6 +20,7 @@ system-proxy-auto = yes
 selector-menu-layout = nested
 selector-persist = 0
 log-file = logs/drover.log
+homepage-url = http://127.0.0.1:9090/ui/
 `
 	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
@@ -28,8 +29,19 @@ log-file = logs/drover.log
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o.SBDir != filepath.Join(dir, "cores") || o.SBConfigFile != filepath.Join(dir, "config.json") || !o.SystemProxyAuto || o.TunStartMode != "on" || o.SelectorMenuLayout != "nested" || o.SelectorPersist || o.LogFile != filepath.Join(dir, "logs", "drover.log") {
+	if o.SBDir != filepath.Join(dir, "cores") || o.SBConfigFile != filepath.Join(dir, "config.json") || o.HomepageURL != "http://127.0.0.1:9090/ui/" || !o.SystemProxyAuto || o.TunStartMode != "on" || o.SelectorMenuLayout != "nested" || o.SelectorPersist || o.LogFile != filepath.Join(dir, "logs", "drover.log") {
 		t.Fatalf("options mismatch: %#v", o)
+	}
+}
+
+func TestLoadOptionsRejectsNonWebHomepageURL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sing-box-drover.ini")
+	if err := os.WriteFile(path, []byte("[sing-box-drover]\nhomepage-url = file:///tmp/panel\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadOptions(path); err == nil {
+		t.Fatal("invalid homepage URL was accepted")
 	}
 }
 
