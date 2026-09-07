@@ -19,9 +19,9 @@ func attachProcessJob(*os.Process) (processJob, error) { return nil, nil }
 
 func closeProcessJob(processJob) {}
 
-func requestGracefulStop(process *os.Process) error {
+func requestGracefulStop(process *os.Process) (func(), error) {
 	if process == nil {
-		return errors.New("process is nil")
+		return nil, errors.New("process is nil")
 	}
-	return process.Signal(os.Interrupt)
+	return func() {}, process.Signal(os.Interrupt)
 }

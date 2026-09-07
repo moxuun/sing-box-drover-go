@@ -109,26 +109,27 @@ type Event struct {
 }
 
 type App struct {
-	mu          sync.RWMutex
-	selectorMu  sync.Mutex
-	executable  string
-	processDir  string
-	options     config.Options
-	source      config.ConfigSource
-	config      config.SingBoxConfig
-	logger      *logging.Logger
-	state       *state.File
-	api         *clash.Client
-	supervisor  *core.Supervisor
-	instance    *platform.SingleInstance
-	selectors   []clash.Selector
-	flags       Flags
-	tunActive   bool
-	proxyActive bool
-	restored    bool
-	closed      bool
-	updateStop  context.CancelFunc
-	events      chan Event
+	mu            sync.RWMutex
+	selectorMu    sync.Mutex
+	executable    string
+	processDir    string
+	options       config.Options
+	source        config.ConfigSource
+	config        config.SingBoxConfig
+	logger        *logging.Logger
+	state         *state.File
+	api           *clash.Client
+	supervisor    *core.Supervisor
+	instance      *platform.SingleInstance
+	selectors     []clash.Selector
+	flags         Flags
+	tunActive     bool
+	proxyActive   bool
+	restored      bool
+	closed        bool
+	updateStop    context.CancelFunc
+	apiPollCancel context.CancelFunc
+	events        chan Event
 }
 
 func New(args []string) (*App, error) {
@@ -273,7 +274,9 @@ func (a *App) runtimeConfig(tun bool) string {
 func (a *App) handleCoreEvent(event core.Event) {
 	a.emit(Event{Kind: event.Kind, State: event.State, Message: event.Message})
 	if event.State == core.StateRunning && a.api != nil {
-		go a.waitForAPI()
+		a.startAPIPoll()
+	} else if event.State != core.StateRunning {
+		a.stopAPIPoll()
 	}
 }
 
@@ -290,22 +293,58 @@ func (a *App) emit(event Event) {
 	}
 }
 
-func (a *App) waitForAPI() {
+func (a *App) startAPIPoll() {
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		return
+	}
+	if a.apiPollCancel != nil {
+		a.apiPollCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.apiPollCancel = cancel
+	a.mu.Unlock()
+	go a.waitForAPI(ctx)
+}
+
+func (a *App) stopAPIPoll() {
+	a.mu.Lock()
+	cancel := a.apiPollCancel
+	a.apiPollCancel = nil
+	a.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (a *App) waitForAPI(ctx context.Context) {
 	deadline := time.Now().Add(time.Minute)
 	for time.Now().Before(deadline) {
-		a.mu.RLock()
-		closed := a.closed
-		a.mu.RUnlock()
-		if closed {
+		if ctx.Err() != nil {
 			return
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		_, err := a.RefreshSelectors(ctx)
+		requestCtx, cancel := context.WithTimeout(ctx, time.Second)
+		_, err := a.RefreshSelectors(requestCtx)
 		cancel()
+		if ctx.Err() != nil {
+			return
+		}
 		if err == nil {
 			return
 		}
-		time.Sleep(500 * time.Millisecond)
+		delay := 500 * time.Millisecond
+		if remaining := time.Until(deadline); remaining < delay {
+			delay = remaining
+		}
+		if delay <= 0 {
+			return
+		}
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
@@ -558,6 +597,8 @@ func (a *App) Close() error {
 		return nil
 	}
 	a.closed = true
+	pollCancel := a.apiPollCancel
+	a.apiPollCancel = nil
 	stop := a.updateStop
 	a.updateStop = nil
 	instance := a.instance
@@ -566,6 +607,9 @@ func (a *App) Close() error {
 	a.proxyActive = false
 	a.mu.Unlock()
 	a.selectorMu.Unlock()
+	if pollCancel != nil {
+		pollCancel()
+	}
 	if stop != nil {
 		stop()
 	}

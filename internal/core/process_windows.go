@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -65,20 +66,29 @@ func closeProcessJob(job processJob) {
 	}
 }
 
-func requestGracefulStop(process *os.Process) error {
+func requestGracefulStop(process *os.Process) (func(), error) {
 	if process == nil {
-		return errors.New("process is nil")
+		return nil, errors.New("process is nil")
 	}
 	_, _, _ = freeConsole.Call()
 	if ok, _, err := attachConsole.Call(uintptr(process.Pid)); ok == 0 {
-		return err
+		return nil, err
 	}
-	defer freeConsole.Call()
-	_, _, _ = setConsoleCtrlHandler.Call(0, 1)
-	defer setConsoleCtrlHandler.Call(0, 0)
+	if ok, _, err := setConsoleCtrlHandler.Call(0, 1); ok == 0 {
+		_, _, _ = freeConsole.Call()
+		return nil, err
+	}
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
+			_, _, _ = setConsoleCtrlHandler.Call(0, 0)
+			_, _, _ = freeConsole.Call()
+		})
+	}
 	ok, _, err := generateConsoleCtrlEvent.Call(winapi.CTRL_C_EVENT, 0)
 	if ok == 0 {
-		return err
+		cleanup()
+		return nil, err
 	}
-	return nil
+	return cleanup, nil
 }

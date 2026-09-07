@@ -9,6 +9,22 @@ import (
 	"testing"
 )
 
+func TestClientReusesDefaultHTTPClientAndTransport(t *testing.T) {
+	c := NewClient("127.0.0.1:9090", "secret")
+	first := c.client()
+	second := c.client()
+	if first != second || first.Transport != second.Transport {
+		t.Fatalf("default HTTP client or transport was recreated: first=%p second=%p", first, second)
+	}
+	transport, ok := first.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("default transport type = %T, want *http.Transport", first.Transport)
+	}
+	if transport.Proxy != nil {
+		t.Fatal("default Clash API transport must not use the system proxy")
+	}
+}
+
 func TestParseSelectorsPreservesAPIOrderAndProviderNodes(t *testing.T) {
 	data := []byte(`{"proxies":{"机场A":{"type":"Selector","all":["香港01","香港02"],"now":"香港02"},"unused":{"type":"Direct","all":["x"]},"机场B":{"type":"Selector","all":["东京01","东京02"],"now":"东京01"}}}`)
 	got, err := ParseSelectors(data)

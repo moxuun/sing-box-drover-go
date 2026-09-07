@@ -36,6 +36,36 @@ func TestSupervisorStopsWithoutUnexpectedFailure(t *testing.T) {
 	}
 }
 
+func TestWaitForStopCompletionDefersCleanupUntilDoneOrForce(t *testing.T) {
+	t.Run("child done", func(t *testing.T) {
+		done := make(chan struct{})
+		close(done)
+		calledForce := false
+		cleaned := false
+		waitForStopCompletion(func() { cleaned = true }, done, context.Background(), time.Hour, func() { calledForce = true })
+		if calledForce {
+			t.Fatal("force path ran after child completion")
+		}
+		if !cleaned {
+			t.Fatal("cleanup did not run after child completion")
+		}
+	})
+
+	t.Run("force path", func(t *testing.T) {
+		done := make(chan struct{})
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		events := make([]string, 0, 2)
+		waitForStopCompletion(func() { events = append(events, "cleanup") }, done, ctx, time.Hour, func() {
+			events = append(events, "force")
+			close(done)
+		})
+		if strings.Join(events, ",") != "force,cleanup" {
+			t.Fatalf("cleanup ordering = %v, want force,cleanup", events)
+		}
+	})
+}
+
 func TestBoundedBufferKeepsTail(t *testing.T) {
 	var buffer boundedBuffer
 	input := make([]byte, MaxCapturedOutput+17)

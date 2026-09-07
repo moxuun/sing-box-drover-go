@@ -24,6 +24,8 @@ type Client struct {
 	Secret     string
 	HTTPClient *http.Client
 	Timeout    time.Duration
+
+	defaultClient *http.Client
 }
 
 func NewClient(controller, secret string) *Client {
@@ -31,14 +33,19 @@ func NewClient(controller, secret string) *Client {
 	if controller != "" && !strings.Contains(controller, "://") {
 		controller = "http://" + controller
 	}
-	return &Client{BaseURL: strings.TrimRight(controller, "/"), Secret: secret, Timeout: time.Second}
+	client := &Client{BaseURL: strings.TrimRight(controller, "/"), Secret: secret, Timeout: time.Second}
+	client.defaultClient = &http.Client{Timeout: client.Timeout, Transport: &http.Transport{Proxy: nil}}
+	return client
 }
 
 func (c *Client) client() *http.Client {
 	if c.HTTPClient != nil {
 		return c.HTTPClient
 	}
-	return &http.Client{Timeout: c.Timeout, Transport: &http.Transport{Proxy: nil}}
+	if c.defaultClient == nil {
+		c.defaultClient = &http.Client{Timeout: c.Timeout, Transport: &http.Transport{Proxy: nil}}
+	}
+	return c.defaultClient
 }
 
 func (c *Client) Do(ctx context.Context, method, path string, body []byte) ([]byte, error) {

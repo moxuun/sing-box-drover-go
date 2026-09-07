@@ -213,6 +213,43 @@ func criticalOutput(output string) string {
 	return strings.TrimSpace(output)
 }
 
+func waitForStopCompletion(cleanup func(), done <-chan struct{}, ctx context.Context, wait time.Duration, force func()) {
+	if cleanup != nil {
+		defer cleanup()
+	}
+	timer := time.NewTimer(wait)
+	stopTimer := func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+	}
+	select {
+	case <-done:
+		stopTimer()
+	case <-ctx.Done():
+		stopTimer()
+		if force != nil {
+			force()
+		}
+	case <-timer.C:
+		if force != nil {
+			force()
+		}
+	}
+
+	// Wait for the goroutine to release the job/process handles. A short
+	// bounded wait keeps shutdown responsive even if an OS API misbehaves.
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		// The wait goroutine still owns the process handle. Leave it to finish
+		// rather than touching a handle that could be reused by a new process.
+	}
+}
+
 func (s *Supervisor) Stop(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -239,7 +276,10 @@ func (s *Supervisor) Stop(ctx context.Context) error {
 	s.mu.Unlock()
 	s.notify(Event{Kind: EventState, State: StateStopping, Message: "stopping sing-box"})
 
-	_ = requestGracefulStop(process)
+	cleanup, signalErr := requestGracefulStop(process)
+	if signalErr != nil && s.logger != nil {
+		s.logger.Log("Core", "graceful stop signal failed: "+signalErr.Error())
+	}
 	wait := 10 * time.Second
 	if deadline, ok := ctx.Deadline(); ok {
 		wait = time.Until(deadline)
@@ -247,36 +287,7 @@ func (s *Supervisor) Stop(ctx context.Context) error {
 			wait = 0
 		}
 	}
-	timer := time.NewTimer(wait)
-	select {
-	case <-done:
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-		return nil
-	case <-ctx.Done():
-		if !timer.Stop() {
-			select {
-			case <-timer.C:
-			default:
-			}
-		}
-		s.forceKill(process)
-	case <-timer.C:
-		s.forceKill(process)
-	}
-
-	// Wait for the goroutine to release the job/process handles. A short
-	// bounded wait keeps shutdown responsive even if an OS API misbehaves.
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		// The wait goroutine still owns the process handle. Leave it to finish
-		// rather than touching a handle that could be reused by a new process.
-	}
+	waitForStopCompletion(cleanup, done, ctx, wait, func() { s.forceKill(process) })
 	return nil
 }
 

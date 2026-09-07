@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -150,5 +151,49 @@ func TestRefreshSelectorsKeepsCacheWhenAPIFails(t *testing.T) {
 	second, err := a.RefreshSelectors(context.Background())
 	if err == nil || len(second) != 1 || second[0].Now != "香港01" {
 		t.Fatalf("cache was not retained on failure: %#v %v", second, err)
+	}
+}
+
+func TestAPIPollCancellationStopsStaleRetryAndRestore(t *testing.T) {
+	var calls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		close(started)
+		<-release
+		_, _ = w.Write([]byte(`{"proxies":{"fresh":{"type":"Selector","all":["node"],"now":"node"}}}`))
+	}))
+	defer server.Close()
+	a := &App{
+		api:       clash.NewClient(server.URL, "token"),
+		options:   config.Options{SelectorPersist: true},
+		selectors: []clash.Selector{{Name: "cached", All: []string{"old"}, Now: "old"}},
+		events:    make(chan Event, 1),
+	}
+	pollCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		a.waitForAPI(pollCtx)
+		close(done)
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("readiness poll did not issue its first request")
+	}
+	cancel()
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("superseded readiness poll did not stop")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("superseded readiness poll retried: %d requests", got)
+	}
+	got := a.Selectors()
+	if len(got) != 1 || got[0].Name != "cached" || got[0].Now != "old" {
+		t.Fatalf("superseded readiness poll changed the selector cache: %#v", got)
 	}
 }
