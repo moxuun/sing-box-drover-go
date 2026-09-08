@@ -192,7 +192,7 @@ func NewAt(executable string, args []string) (*App, error) {
 	}
 	appState := state.Load(filepath.Join(processDir, "sing-box-drover.state.json"))
 	selectors := staticSelectors(sbConfig.Selectors)
-	if options.SelectorPersist {
+	if options.SelectorPersist || flags.Restart {
 		applyPersistedStatic(selectors, appState)
 	}
 	app := &App{
@@ -580,8 +580,14 @@ func (a *App) ToggleTun(enabled bool) error {
 func (a *App) Restart() error {
 	a.selectorMu.Lock()
 	defer a.selectorMu.Unlock()
-	tun := a.TunActive()
-	return a.restartWithConfig(tun, false)
+	// Start a replacement controller so repeated restarts do not retain the
+	// old controller's Go heap and runtime resources.
+	a.persistSelectors(a.Selectors())
+	flags := "-restart"
+	if a.TunActive() {
+		flags += " -tun"
+	}
+	return platform.LaunchSelf(flags, platform.IsProcessElevated())
 }
 
 func (a *App) resetRestoration() {

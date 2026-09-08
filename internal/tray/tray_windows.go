@@ -506,7 +506,8 @@ func (t *Tray) handleCommand(command uint32) {
 			t.setFault(true)
 			t.balloon(err.Error(), "Error", true)
 		} else {
-			t.setFault(false)
+			_ = t.controller.Close()
+			postQuitMessage.Call(0)
 		}
 	case cmdAutostart:
 		if err := t.controller.SetAutostart(!t.autostartEnabled); err != nil {

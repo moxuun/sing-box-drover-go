@@ -1,6 +1,6 @@
 # sing-box-drover-go（Go 重构版）
 
-[![License](https://img.shields.io/github/license/moxuun/sing-box-dover-go)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/moxuun/sing-box-dover-go)](...)
 [![Build](https://github.com/moxuun/sing-box-dover-go/actions/workflows/release.yml/badge.svg)](https://github.com/moxuun/sing-box-dover-go/actions/workflows/release.yml)
 
