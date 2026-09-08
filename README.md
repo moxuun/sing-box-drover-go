@@ -1,12 +1,10 @@
 # sing-box-dover-go（Go 重构版）
 
-这是一个轻量的 Windows 托盘控制器，负责启动和控制外置的
-`sing-box.exe` 内核。
+[![License](https://img.shields.io/github/license/moxuun/sing-box-dover-go)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/moxuun/sing-box-dover-go)](...)
+[![Build](https://github.com/moxuun/sing-box-dover-go/actions/workflows/release.yml/badge.svg)](https://github.com/moxuun/sing-box-dover-go/actions/workflows/release.yml)
 
-本项目保留 [`hdrover/sing-box-drover`](https://github.com/hdrover/sing-box-drover)
-的使用方式，并从运行中的 Clash API 动态读取选择器。这样，reF1nd 等兼容
-内核通过 provider 展开的节点也能直接显示在托盘菜单中，控制器不需要理解
-各种 provider 文件格式。
+本项目是 [`hdrover/sing-box-drover`](https://github.com/hdrover/sing-box-drover) 的 Go/Win32 重构版。它保留了原项目使用外置 sing-box.exe 内核，通过 Windows 托盘控制系统代理、TUN 和出站选择器”的核心定位，并针对 reF1nd 等兼容内核的 provider 节点展开方式进行了适配。
 
 ## 重构原因
 
@@ -25,8 +23,6 @@
 ## 菜单界面
 
 ![托盘菜单界面](./docs/menu.png)
-
-sing-box 原始配置始终是配置真源。普通模式切换不会改写它。
 
 ## 文档
 
