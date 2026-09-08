@@ -1,6 +1,7 @@
 # Build output
 /output/*
 !/output/.gitkeep
+*.syso
 
 # Local Codex instructions
 /AGENTS.md

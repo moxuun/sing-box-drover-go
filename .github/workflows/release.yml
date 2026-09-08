@@ -43,13 +43,7 @@ jobs:
 
       - name: 构建程序
         shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          New-Item -ItemType Directory -Force -Path build | Out-Null
-          $env:GOOS = "windows"
-          $env:GOARCH = "amd64"
-          $env:CGO_ENABLED = "0"
-          go build -trimpath -ldflags="-s -w -H=windowsgui" -o build\sing-box-dover-go.exe .\cmd\sing-box-drover
+        run: .\scripts\build.ps1 -OutputPath build\sing-box-dover-go.exe
 
       - name: 打包
         shell: pwsh

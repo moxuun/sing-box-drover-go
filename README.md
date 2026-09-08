@@ -1,4 +1,4 @@
-# sing-box-dover-go（Go 重构版）
+# sing-box-drover-go（Go 重构版）
 
 [![License](https://img.shields.io/github/license/moxuun/sing-box-dover-go)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/moxuun/sing-box-dover-go)](...)
@@ -8,9 +8,9 @@
 
 ## 重构原因
 
-- 不适配 [`reF1nd`](https://github.com/reF1nd/sing-box) 内核 `config.json` 的
+- [`hdrover/sing-box-drover`](https://github.com/hdrover/sing-box-drover)不适配 [`reF1nd`](https://github.com/reF1nd/sing-box) 内核 `config.json` 的
   `provider` 写法，托盘菜单节点显示不全。
-- 原项目用 `Pascal` 语言编写，编译环境过大，难以维护。
+- [`hdrover/sing-box-drover`](https://github.com/hdrover/sing-box-drover)用 `Pascal` 语言编写，编译环境过大，难以维护。
 
 ## 内存占用
 

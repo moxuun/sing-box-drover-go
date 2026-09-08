@@ -7,6 +7,8 @@
 - `internal/core`：所管理的 `sing-box.exe` 生命周期；
 - `internal/tray`：原生 Win32 托盘和选择器菜单渲染；
 - `internal/windows`：系统代理、提权、单实例和开机启动；
+- `resources`：Windows 应用图标和权限清单；
+- `scripts`：可复现的本地构建脚本；
 - `docs`：用户说明和开发资料；
 - `tools`：国旗资源生成器等离线开发工具；
 - `examples`：纳入版本控制的示例配置；
@@ -20,10 +22,13 @@
 $env:GOTOOLCHAIN = "go1.25.6"
 go test ./...
 go vet ./...
-$env:GOOS = "windows"
-$env:GOARCH = "amd64"
-go build -trimpath -ldflags="-s -w -H=windowsgui" -o .\output\sing-box-dover-go.exe .\cmd\sing-box-drover
+.\scripts\build.ps1
 ```
+
+构建脚本使用固定版本的 Go 资源生成器，把 `resources/app.ico` 和
+`resources/app.manifest` 临时生成到 `cmd/sing-box-drover/resource_windows_amd64.syso`，
+再链接进 Windows GUI 程序；构建结束后会删除这个中间文件。GitHub Actions
+调用同一脚本，因此发布产物也会带有应用图标和 `asInvoker` 清单。
 
 `go.mod` 暂时将 Go 1.25.6 固定为低内存构建基线。`toolchain` 指令不会让
 已经运行的 Go 1.27 自动降级，因此需要在 PowerShell 中设置

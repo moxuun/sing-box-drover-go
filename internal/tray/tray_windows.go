@@ -14,6 +14,7 @@ import (
 
 	"sing-box-drover/internal/app"
 	"sing-box-drover/internal/clash"
+	"sing-box-drover/internal/core"
 	platform "sing-box-drover/internal/windows"
 
 	winapi "golang.org/x/sys/windows"
@@ -40,6 +41,7 @@ const (
 	nifIcon       = 2
 	nifTip        = 4
 	nifInfo       = 16
+	nifShowTip    = 0x80
 
 	nimVersion4 = 4
 
@@ -53,9 +55,7 @@ const (
 	tpmReturnCmd = 0x0100
 	tpmNonotify  = 0x0080
 
-	vkShift        = 0x10
-	idiApplication = 32512
-
+	vkShift         = 0x10
 	cmdSystemProxy  = 100
 	cmdTun          = 101
 	cmdRestart      = 102
@@ -138,7 +138,6 @@ var (
 	appendMenu          = user32.NewProc("AppendMenuW")
 	destroyMenu         = user32.NewProc("DestroyMenu")
 	trackPopupMenu      = user32.NewProc("TrackPopupMenu")
-	loadIcon            = user32.NewProc("LoadIconW")
 	getModuleHandle     = kernel32.NewProc("GetModuleHandleW")
 	shellNotifyIcon     = shell32.NewProc("Shell_NotifyIconW")
 	shellExecute        = shell32.NewProc("ShellExecuteW")
@@ -161,6 +160,9 @@ type Tray struct {
 	notifyVersion4   bool
 	eventGate        trayEventGate
 	autostartEnabled bool
+	statusMu         sync.Mutex
+	fault            bool
+	iconMu           sync.Mutex
 	done             chan struct{}
 	closeOnce        sync.Once
 }
@@ -189,7 +191,10 @@ func run(controller *app.App) error {
 	defer tray.close()
 	if controller.Options().SystemProxyAuto {
 		if err := controller.EnableSystemProxy(); err != nil {
+			tray.setFault(true)
 			tray.balloon("System proxy could not be enabled: "+err.Error(), "Error", true)
+		} else {
+			_ = tray.refreshIcon()
 		}
 	}
 	go tray.watchEvents()
@@ -235,16 +240,16 @@ func newTray(controller *app.App) (*Tray, error) {
 	traysMu.Lock()
 	trays[hWnd] = t
 	traysMu.Unlock()
-	t.icon, _, _ = loadIcon.Call(0, idiApplication)
-	if t.icon == 0 {
-		_, _, _ = destroyWindow.Call(hWnd)
-		return nil, errors.New("LoadIcon failed")
+	t.icon, err = createTrayIcon(t.runtimeStatus().iconKind())
+	if err != nil {
+		t.close()
+		return nil, err
 	}
 	if err := t.notify(nimAdd); err != nil {
 		t.close()
 		return nil, err
 	}
-	versionData := t.data(nifMessage)
+	versionData := t.data(nifMessage | nifShowTip)
 	versionData.TimeoutOrVersion = nimVersion4
 	result, _, _ := shellNotifyIcon.Call(nimSetVersion, uintptr(unsafe.Pointer(&versionData)))
 	t.notifyVersion4 = result != 0
@@ -254,8 +259,9 @@ func newTray(controller *app.App) (*Tray, error) {
 func (t *Tray) close() {
 	t.closeOnce.Do(func() {
 		close(t.done)
+		t.iconMu.Lock()
 		if t.hWnd != 0 {
-			data := t.data(nifMessage)
+			data := t.dataLocked(nifMessage)
 			_, _, _ = shellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(&data)))
 			traysMu.Lock()
 			delete(trays, t.hWnd)
@@ -263,6 +269,9 @@ func (t *Tray) close() {
 			_, _, _ = destroyWindow.Call(t.hWnd)
 			t.hWnd = 0
 		}
+		destroyTrayIcon(t.icon)
+		t.icon = 0
+		t.iconMu.Unlock()
 		if t.className != nil {
 			instance, _, _ := getModuleHandle.Call(0)
 			_, _, _ = unregisterClass.Call(uintptr(unsafe.Pointer(t.className)), instance)
@@ -328,8 +337,11 @@ func (t *Tray) toggleProxy(enabled bool) {
 		err = t.controller.DisableSystemProxy()
 	}
 	if err != nil {
+		t.setFault(true)
 		t.balloon(err.Error(), "Error", true)
+		return
 	}
+	t.setFault(false)
 }
 
 func (t *Tray) toggleTun(enabled bool) {
@@ -340,12 +352,16 @@ func (t *Tray) toggleTun(enabled bool) {
 				postQuitMessage.Call(0)
 				return
 			} else {
+				t.setFault(true)
 				t.balloon("Elevation was not accepted: "+launchErr.Error(), "Error", true)
 				return
 			}
 		}
+		t.setFault(true)
 		t.balloon(err.Error(), "Error", true)
+		return
 	}
+	t.setFault(false)
 }
 
 func (t *Tray) showMenu() {
@@ -355,10 +371,12 @@ func (t *Tray) showMenu() {
 func (t *Tray) showMenuAt(anchor *point) {
 	selectors, err := t.controller.RefreshSelectors(context.Background())
 	if err != nil && len(selectors) == 0 && strings.Contains(strings.ToLower(err.Error()), "not configured") == false {
+		t.setFault(true)
 		t.balloon("Selector refresh failed: "+err.Error(), "Error", true)
 	}
 	menu, err := t.buildMenu(selectors)
 	if err != nil {
+		t.setFault(true)
 		t.balloon(err.Error(), "Error", true)
 		return
 	}
@@ -485,7 +503,10 @@ func (t *Tray) handleCommand(command uint32) {
 		t.toggleTun(!t.controller.TunActive())
 	case cmdRestart:
 		if err := t.controller.Restart(); err != nil {
+			t.setFault(true)
 			t.balloon(err.Error(), "Error", true)
+		} else {
+			t.setFault(false)
 		}
 	case cmdAutostart:
 		if err := t.controller.SetAutostart(!t.autostartEnabled); err != nil {
@@ -495,13 +516,16 @@ func (t *Tray) handleCommand(command uint32) {
 					postQuitMessage.Call(0)
 					return
 				} else {
+					t.setFault(true)
 					t.balloon("Elevation was not accepted: "+launchErr.Error(), "Error", true)
 					return
 				}
 			}
+			t.setFault(true)
 			t.balloon(err.Error(), "Error", true)
 		} else {
 			t.autostartEnabled = !t.autostartEnabled
+			t.setFault(false)
 		}
 	case cmdHomepage:
 		openURL(t.controller.Options().HomepageURL)
@@ -513,21 +537,80 @@ func (t *Tray) handleCommand(command uint32) {
 			err := t.controller.SwitchSelector(ctx, action.selector, action.value)
 			cancel()
 			if err != nil {
+				t.setFault(true)
 				t.balloon(err.Error(), "Error", true)
+			} else {
+				t.setFault(false)
 			}
 		}
 	}
 }
 
+func (t *Tray) runtimeStatus() trayRuntimeStatus {
+	t.statusMu.Lock()
+	fault := t.fault
+	t.statusMu.Unlock()
+	return trayRuntimeStatus{
+		coreState:   t.controller.CoreState(),
+		systemProxy: t.controller.SystemProxyActive(),
+		tun:         t.controller.TunActive(),
+		fault:       fault,
+	}
+}
+
+func (t *Tray) setFault(fault bool) {
+	t.statusMu.Lock()
+	t.fault = fault
+	t.statusMu.Unlock()
+	_ = t.refreshIcon()
+}
+
+func (t *Tray) refreshIcon() error {
+	t.iconMu.Lock()
+	defer t.iconMu.Unlock()
+	select {
+	case <-t.done:
+		return nil
+	default:
+	}
+	icon, err := createTrayIcon(t.runtimeStatus().iconKind())
+	if err != nil {
+		return err
+	}
+	old := t.icon
+	t.icon = icon
+	if t.hWnd != 0 {
+		if err := t.notifyLocked(nimModify); err != nil {
+			t.icon = old
+			destroyTrayIcon(icon)
+			return err
+		}
+	}
+	destroyTrayIcon(old)
+	return nil
+}
+
 func (t *Tray) data(flags uint32) notifyIconData {
+	t.iconMu.Lock()
+	defer t.iconMu.Unlock()
+	return t.dataLocked(flags)
+}
+
+func (t *Tray) dataLocked(flags uint32) notifyIconData {
 	data := notifyIconData{CbSize: uint32(unsafe.Sizeof(notifyIconData{})), HWnd: t.hWnd, UID: 1, Flags: flags, CallbackMessage: wmTrayCallback, Icon: t.icon}
-	tip, _ := winapi.UTF16FromString("sing-box-drover")
+	tip, _ := winapi.UTF16FromString(t.runtimeStatus().tooltip())
 	copy(data.Tip[:], tip)
 	return data
 }
 
 func (t *Tray) notify(operation uint32) error {
-	data := t.data(nifMessage | nifIcon | nifTip)
+	t.iconMu.Lock()
+	defer t.iconMu.Unlock()
+	return t.notifyLocked(operation)
+}
+
+func (t *Tray) notifyLocked(operation uint32) error {
+	data := t.dataLocked(nifMessage | nifIcon | nifTip | nifShowTip)
 	if ok, _, err := shellNotifyIcon.Call(uintptr(operation), uintptr(unsafe.Pointer(&data))); ok == 0 {
 		return fmt.Errorf("Shell_NotifyIcon: %w", err)
 	}
@@ -535,10 +618,12 @@ func (t *Tray) notify(operation uint32) error {
 }
 
 func (t *Tray) balloon(text, title string, isError bool) {
+	t.iconMu.Lock()
+	defer t.iconMu.Unlock()
 	if t.hWnd == 0 {
 		return
 	}
-	data := t.data(nifInfo)
+	data := t.dataLocked(nifInfo)
 	copy(data.Info[:], mustUTF16(text, len(data.Info)))
 	copy(data.InfoTitle[:], mustUTF16(title, len(data.InfoTitle)))
 	if isError {
@@ -574,7 +659,14 @@ func (t *Tray) watchEvents() {
 		case <-t.done:
 			return
 		case event := <-t.controller.Events():
-			if event.Kind == 1 || event.State == 4 {
+			if event.State == core.StateRunning {
+				t.setFault(false)
+			} else if event.Kind == core.EventError || event.State == core.StateFailed {
+				t.setFault(true)
+			} else {
+				_ = t.refreshIcon()
+			}
+			if event.Kind == core.EventError || event.State == core.StateFailed {
 				t.balloon(event.Message, "sing-box-drover", true)
 			}
 		}

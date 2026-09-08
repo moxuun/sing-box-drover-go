@@ -393,6 +393,15 @@ func (a *App) SystemProxyActive() bool {
 	defer a.mu.RUnlock()
 	return a.proxyActive
 }
+func (a *App) CoreState() core.State {
+	a.mu.RLock()
+	supervisor := a.supervisor
+	a.mu.RUnlock()
+	if supervisor == nil {
+		return core.StateStopped
+	}
+	return supervisor.State()
+}
 func (a *App) Options() config.Options { return a.options }
 func (a *App) Flags() Flags            { return a.flags }
 func (a *App) Events() <-chan Event    { return a.events }
