@@ -18,7 +18,10 @@ import (
 	platform "sing-box-drover/internal/windows"
 )
 
-var ErrAlreadyRunning = errors.New("sing-box-drover is already running")
+var (
+	ErrAlreadyRunning   = errors.New("sing-box-drover is already running")
+	ErrElevationHandoff = errors.New("elevated sing-box-drover instance launched")
+)
 
 type Flags struct {
 	Tun              bool
@@ -48,6 +51,10 @@ func ParseFlags(args []string) Flags {
 		}
 	}
 	return flags
+}
+
+func startupTunRequested(sbConfig config.SingBoxConfig, options config.Options, flags Flags) bool {
+	return sbConfig.HasTunInbound && (flags.Tun || options.TunStartMode == "on")
 }
 
 // retryInstanceAcquisition keeps the restart handoff bounded while allowing
@@ -228,7 +235,16 @@ func NewAt(executable string, args []string) (*App, error) {
 		}
 		logger.Log("Autostart", "autostart "+status)
 	}
-	app.tunActive = sbConfig.HasTunInbound && platform.IsProcessElevated() && (flags.Tun || options.TunStartMode == "on")
+	wantTun := startupTunRequested(sbConfig, options, flags)
+	if wantTun && !platform.IsProcessElevated() {
+		if err := app.LaunchElevated(true); err != nil {
+			_ = app.Close()
+			return nil, fmt.Errorf("launch elevated controller for TUN: %w", err)
+		}
+		_ = app.Close()
+		return nil, ErrElevationHandoff
+	}
+	app.tunActive = wantTun
 	if err := app.supervisor.Start(app.runtimeConfig(app.tunActive)); err != nil {
 		app.Close()
 		return nil, err

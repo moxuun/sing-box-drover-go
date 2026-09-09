@@ -76,6 +76,28 @@ func TestRetryInstanceAcquisitionPropagatesError(t *testing.T) {
 	}
 }
 
+func TestStartupTunRequested(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  config.SingBoxConfig
+		options config.Options
+		flags   Flags
+		want    bool
+	}{
+		{name: "configured start mode", config: config.SingBoxConfig{HasTunInbound: true}, options: config.Options{TunStartMode: "on"}, want: true},
+		{name: "command line flag", config: config.SingBoxConfig{HasTunInbound: true}, flags: Flags{Tun: true}, want: true},
+		{name: "no tun inbound", options: config.Options{TunStartMode: "on"}, want: false},
+		{name: "disabled", config: config.SingBoxConfig{HasTunInbound: true}, options: config.Options{TunStartMode: "off"}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := startupTunRequested(test.config, test.options, test.flags); got != test.want {
+				t.Fatalf("startupTunRequested() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestRefreshSelectorsRestoresOnlyExistingOptions(t *testing.T) {
 	var switched []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
