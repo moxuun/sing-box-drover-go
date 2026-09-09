@@ -6,6 +6,12 @@ import (
 	"testing"
 )
 
+func TestDefaultOptionsUseProjectHomepage(t *testing.T) {
+	if got := DefaultOptions().HomepageURL; got != "https://github.com/moxuun/sing-box-dover-go" {
+		t.Fatalf("default homepage = %q, want project repository", got)
+	}
+}
+
 func TestLoadOptionsResolvesRelativeFilesAndBooleans(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{}"), 0o600); err != nil {

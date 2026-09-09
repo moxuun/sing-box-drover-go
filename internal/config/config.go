@@ -54,7 +54,7 @@ type Options struct {
 	BaseDir            string
 }
 
-const defaultHomepageURL = "https://github.com/hdrover/sing-box-drover"
+const defaultHomepageURL = "https://github.com/moxuun/sing-box-dover-go"
 
 func DefaultOptions() Options {
 	return Options{SBConfigFile: "config.json", HomepageURL: defaultHomepageURL, TunStartMode: "off", SelectorMenuLayout: "auto"}
