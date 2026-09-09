@@ -83,6 +83,7 @@ func (a *App) applyConfigCandidate(candidate configCandidate) configSnapshot {
 	a.source = candidate.source
 	a.config = candidate.config
 	a.api = candidate.api
+	a.apiReady = false
 	a.selectors = cloneSelectors(candidate.selectors)
 	a.restored = false
 	return previous

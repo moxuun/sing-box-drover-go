@@ -9,6 +9,27 @@ import (
 	winapi "golang.org/x/sys/windows"
 )
 
+func TestShouldRestoreTrayIconAfterTaskbarRecreationOrResume(t *testing.T) {
+	const taskbarCreated = 0xc123
+	for _, test := range []struct {
+		name    string
+		message uint32
+		wParam  uintptr
+		want    bool
+	}{
+		{name: "taskbar recreated", message: taskbarCreated, want: true},
+		{name: "automatic resume", message: wmPowerBroadcast, wParam: pbtAPMResumeAutomatic, want: true},
+		{name: "other power event", message: wmPowerBroadcast, wParam: 0x000a, want: false},
+		{name: "unrelated message", message: wmNull, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := shouldRestoreTrayIcon(test.message, test.wParam, taskbarCreated); got != test.want {
+				t.Fatalf("shouldRestoreTrayIcon() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestRunOnTrayThreadKeepsWindowThread(t *testing.T) {
 	var before, after uint32
 	if err := runOnTrayThread(func() error {

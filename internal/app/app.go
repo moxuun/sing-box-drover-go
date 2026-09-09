@@ -119,6 +119,7 @@ type App struct {
 	logger        *logging.Logger
 	state         *state.File
 	api           *clash.Client
+	apiReady      bool
 	supervisor    *core.Supervisor
 	instance      *platform.SingleInstance
 	selectors     []clash.Selector
@@ -285,9 +286,12 @@ func (a *App) handleCoreEvent(event core.Event) {
 		}
 	}
 	a.emit(Event{Kind: event.Kind, State: event.State, Message: event.Message})
-	a.mu.RLock()
+	a.mu.Lock()
 	apiConfigured := a.api != nil
-	a.mu.RUnlock()
+	if event.State != core.StateRunning {
+		a.apiReady = false
+	}
+	a.mu.Unlock()
 	if event.State == core.StateRunning && apiConfigured {
 		a.startAPIPoll()
 	} else if event.State != core.StateRunning {
@@ -430,6 +434,7 @@ func (a *App) RefreshSelectors(ctx context.Context) ([]clash.Selector, error) {
 	}
 	a.mu.Lock()
 	a.selectors = cloneSelectors(fresh)
+	a.apiReady = true
 	a.mu.Unlock()
 	if a.options.SelectorPersist {
 		a.restorePersisted(ctx, fresh)
@@ -588,6 +593,54 @@ func (a *App) Restart() error {
 		flags += " -tun"
 	}
 	return platform.LaunchSelf(flags, platform.IsProcessElevated())
+}
+
+func (a *App) RecoverAfterResume(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	a.selectorMu.Lock()
+	defer a.selectorMu.Unlock()
+
+	a.mu.RLock()
+	closed := a.closed
+	api := a.api
+	apiReady := a.apiReady
+	supervisor := a.supervisor
+	tun := a.tunActive
+	logger := a.logger
+	a.mu.RUnlock()
+	if closed {
+		return nil
+	}
+	if supervisor == nil {
+		return errors.New("core supervisor is not configured")
+	}
+
+	state := supervisor.State()
+	if state == core.StateStarting || state == core.StateStopping {
+		return nil
+	}
+	if state == core.StateRunning {
+		if api == nil || !apiReady {
+			return nil
+		}
+		if _, err := api.FetchSelectors(ctx); err == nil {
+			return nil
+		} else if logger != nil {
+			logger.Log("Resume", "Clash API unavailable after resume; restarting sing-box: "+err.Error())
+		}
+	} else if logger != nil {
+		logger.Log("Resume", "sing-box is not running after resume; restarting it")
+	}
+
+	if err := a.restartWithConfig(tun, false); err != nil {
+		return err
+	}
+	if logger != nil {
+		logger.Log("Resume", "sing-box restarted after system resume")
+	}
+	return nil
 }
 
 func (a *App) resetRestoration() {

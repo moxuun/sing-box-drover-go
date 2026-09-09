@@ -27,6 +27,9 @@ const (
 	wmNull            = 0x0000
 	wmQueryEndSession = 0x0011
 	wmEndSession      = 0x0016
+	wmPowerBroadcast  = 0x0218
+
+	pbtAPMResumeAutomatic = 0x0012
 
 	csHRedraw      = 0x0002
 	csVRedraw      = 0x0001
@@ -138,6 +141,7 @@ var (
 	appendMenu          = user32.NewProc("AppendMenuW")
 	destroyMenu         = user32.NewProc("DestroyMenu")
 	trackPopupMenu      = user32.NewProc("TrackPopupMenu")
+	registerWindowMsg   = user32.NewProc("RegisterWindowMessageW")
 	getModuleHandle     = kernel32.NewProc("GetModuleHandleW")
 	shellNotifyIcon     = shell32.NewProc("Shell_NotifyIconW")
 	shellExecute        = shell32.NewProc("ShellExecuteW")
@@ -158,6 +162,7 @@ type Tray struct {
 	selectors        map[uint32]selectorAction
 	menuBitmaps      []uintptr
 	notifyVersion4   bool
+	taskbarCreated   uint32
 	eventGate        trayEventGate
 	autostartEnabled bool
 	statusMu         sync.Mutex
@@ -221,11 +226,25 @@ func newTray(controller *app.App) (*Tray, error) {
 	if err != nil {
 		return nil, err
 	}
+	taskbarCreatedName, err := winapi.UTF16PtrFromString("TaskbarCreated")
+	if err != nil {
+		return nil, err
+	}
+	taskbarCreated, _, _ := registerWindowMsg.Call(uintptr(unsafe.Pointer(taskbarCreatedName)))
+	if taskbarCreated == 0 {
+		return nil, errors.New("RegisterWindowMessage(TaskbarCreated) failed")
+	}
 	instance, _, instanceErr := getModuleHandle.Call(0)
 	if instance == 0 {
 		return nil, instanceErr
 	}
-	t := &Tray{controller: controller, className: className, selectors: map[uint32]selectorAction{}, done: make(chan struct{})}
+	t := &Tray{
+		controller:     controller,
+		className:      className,
+		selectors:      map[uint32]selectorAction{},
+		taskbarCreated: uint32(taskbarCreated),
+		done:           make(chan struct{}),
+	}
 	callback := winapi.NewCallback(t.windowProc)
 	class := wndClassEx{CbSize: uint32(unsafe.Sizeof(wndClassEx{})), Style: csHRedraw | csVRedraw, WndProc: callback, Instance: instance}
 	class.ClassName = className
@@ -245,14 +264,10 @@ func newTray(controller *app.App) (*Tray, error) {
 		t.close()
 		return nil, err
 	}
-	if err := t.notify(nimAdd); err != nil {
+	if err := t.installIcon(false); err != nil {
 		t.close()
 		return nil, err
 	}
-	versionData := t.data(nifMessage | nifShowTip)
-	versionData.TimeoutOrVersion = nimVersion4
-	result, _, _ := shellNotifyIcon.Call(nimSetVersion, uintptr(unsafe.Pointer(&versionData)))
-	t.notifyVersion4 = result != 0
 	return t, nil
 }
 
@@ -282,6 +297,14 @@ func (t *Tray) close() {
 }
 
 func (t *Tray) windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
+	if shouldRestoreTrayIcon(message, wParam, t.taskbarCreated) {
+		_ = t.installIcon(true)
+		if message == wmPowerBroadcast {
+			go t.recoverAfterResume()
+			return 1
+		}
+		return 0
+	}
 	switch message {
 	case wmTrayCallback:
 		event := decodeTrayEvent(lParam, wParam, t.notifyVersion4, trayIconID)
@@ -314,6 +337,21 @@ func (t *Tray) windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) 
 		return result
 	}
 	return 0
+}
+
+func shouldRestoreTrayIcon(message uint32, wParam uintptr, taskbarCreated uint32) bool {
+	return taskbarCreated != 0 && message == taskbarCreated ||
+		message == wmPowerBroadcast && uint32(wParam) == pbtAPMResumeAutomatic
+}
+
+func (t *Tray) recoverAfterResume() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	err := t.controller.RecoverAfterResume(ctx)
+	cancel()
+	if err != nil {
+		t.setFault(true)
+		t.balloon("Resume recovery failed: "+err.Error(), "Error", true)
+	}
 }
 
 func (t *Tray) handleTrayClick() {
@@ -604,10 +642,29 @@ func (t *Tray) dataLocked(flags uint32) notifyIconData {
 	return data
 }
 
-func (t *Tray) notify(operation uint32) error {
+func (t *Tray) installIcon(replace bool) error {
 	t.iconMu.Lock()
 	defer t.iconMu.Unlock()
-	return t.notifyLocked(operation)
+	select {
+	case <-t.done:
+		return nil
+	default:
+	}
+	if t.hWnd == 0 {
+		return nil
+	}
+	if replace {
+		deleteData := t.dataLocked(nifMessage)
+		_, _, _ = shellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(&deleteData)))
+	}
+	if err := t.notifyLocked(nimAdd); err != nil {
+		return err
+	}
+	versionData := t.dataLocked(nifMessage | nifShowTip)
+	versionData.TimeoutOrVersion = nimVersion4
+	result, _, _ := shellNotifyIcon.Call(nimSetVersion, uintptr(unsafe.Pointer(&versionData)))
+	t.notifyVersion4 = result != 0
+	return nil
 }
 
 func (t *Tray) notifyLocked(operation uint32) error {

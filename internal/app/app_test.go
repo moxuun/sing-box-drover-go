@@ -110,6 +110,9 @@ func TestRefreshSelectorsRestoresOnlyExistingOptions(t *testing.T) {
 	if len(got) != 2 || got[0].Now != "香港01" || got[1].Now != "东京01" {
 		t.Fatalf("restored selectors mismatch: %#v", got)
 	}
+	if !a.apiReady {
+		t.Fatal("successful Clash API request did not mark it ready")
+	}
 	if len(switched) != 1 || switched[0] != "/proxies/proxy" {
 		t.Fatalf("unexpected restore requests: %#v", switched)
 	}
