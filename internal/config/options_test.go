@@ -16,9 +16,9 @@ func TestLoadOptionsResolvesRelativeFilesAndBooleans(t *testing.T) {
 sb-dir = cores
 sb-config-file = config.json
 tun-start-mode = on
-system-proxy-auto = yes
+system-proxy-auto = on
 selector-menu-layout = nested
-selector-persist = 0
+selector-persist = off
 log-file = logs/drover.log
 homepage-url = http://127.0.0.1:9090/ui/
 `
@@ -31,6 +31,51 @@ homepage-url = http://127.0.0.1:9090/ui/
 	}
 	if o.SBDir != filepath.Join(dir, "cores") || o.SBConfigFile != filepath.Join(dir, "config.json") || o.HomepageURL != "http://127.0.0.1:9090/ui/" || !o.SystemProxyAuto || o.TunStartMode != "on" || o.SelectorMenuLayout != "nested" || o.SelectorPersist || o.LogFile != filepath.Join(dir, "logs", "drover.log") {
 		t.Fatalf("options mismatch: %#v", o)
+	}
+}
+
+func TestLoadOptionsAcceptsLegacyBooleanAliases(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sing-box-drover.ini")
+	text := `[sing-box-drover]
+tun-start-mode = 1
+system-proxy-auto = 0
+selector-persist = 1
+`
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	o, err := LoadOptions(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.TunStartMode != "on" || o.SystemProxyAuto || !o.SelectorPersist {
+		t.Fatalf("legacy boolean aliases mismatch: %#v", o)
+	}
+}
+
+func TestLoadOptionsRejectsInvalidBooleanValues(t *testing.T) {
+	dir := t.TempDir()
+	values := []struct {
+		name  string
+		entry string
+	}{
+		{name: "tun mode", entry: "tun-start-mode = maybe"},
+		{name: "system proxy", entry: "system-proxy-auto = maybe"},
+		{name: "selector persistence", entry: "selector-persist = maybe"},
+	}
+
+	for _, value := range values {
+		t.Run(value.name, func(t *testing.T) {
+			path := filepath.Join(dir, value.name+".ini")
+			if err := os.WriteFile(path, []byte("[sing-box-drover]\n"+value.entry+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadOptions(path); err == nil {
+				t.Fatalf("invalid value was accepted: %s", value.entry)
+			}
+		})
 	}
 }
 

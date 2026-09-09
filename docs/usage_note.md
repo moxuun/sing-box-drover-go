@@ -16,7 +16,7 @@
 启动前，建议在 `sing-box-drover.ini` 中临时使用：
 
 ```ini
-system-proxy-auto = 0
+system-proxy-auto = off
 log-file = sing-box-drover.log
 ```
 
@@ -24,7 +24,7 @@ log-file = sing-box-drover.log
 的其他 `sing-box.exe`、reF1nd 或兼容内核。先关闭 TUN 启动并查看日志，再依次
 测试系统代理、打开选择器菜单、切换节点，最后测试需要提权的 TUN 和任务计划
 程序。确认无误后，如果需要启动时自动开启、退出时自动清理系统代理，再把
-`system-proxy-auto` 改为 `1`。
+`system-proxy-auto` 改为 `on`。
 
 ## 选择器和节点记忆
 
@@ -34,7 +34,7 @@ provider 展开的节点；当前 `now` 项会被勾选。选择节点后，控�
 `PUT /proxies/<selector>`，再要求内核清理旧连接。API 暂时失败时仍保留上次
 成功读取的菜单数据。
 
-启用 `selector-persist = 1` 后，选择结果保存在
+启用 `selector-persist = on` 后，选择结果保存在
 `sing-box-drover.state.json`。只有保存值仍存在于该选择器当前的 `all` 列表时
 才会恢复，否则以 API 当前的 `now` 为准。
 

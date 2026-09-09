@@ -80,15 +80,31 @@ func validateHomepageURL(value string) error {
 	return nil
 }
 
-func parseBool(value string, fallback bool) bool {
+// parseBool uses on/off as the canonical spelling. Numeric and common textual
+// aliases remain accepted so existing local configurations can be migrated
+// without changing behavior, while unknown values are rejected.
+func parseBool(value string, fallback bool) (bool, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return fallback, nil
 	case "1", "true", "yes", "on", "enabled":
-		return true
+		return true, nil
 	case "0", "false", "no", "off", "disabled":
-		return false
+		return false, nil
 	default:
-		return fallback
+		return fallback, fmt.Errorf("invalid boolean value %q (use on or off)", value)
 	}
+}
+
+func parseTunStartMode(value string) (string, error) {
+	enabled, err := parseBool(value, false)
+	if err != nil {
+		return "", fmt.Errorf("invalid tun-start-mode: %w", err)
+	}
+	if enabled {
+		return "on", nil
+	}
+	return "off", nil
 }
 
 // LoadOptions reads the small INI file used by the reference application.
@@ -138,13 +154,17 @@ func LoadOptions(path string) (Options, error) {
 			}
 			o.HomepageURL = value
 		case "tun-start-mode":
-			if strings.EqualFold(value, "off") || value == "0" || value == "" {
-				o.TunStartMode = "off"
-			} else {
-				o.TunStartMode = "on"
+			mode, err := parseTunStartMode(value)
+			if err != nil {
+				return o, err
 			}
+			o.TunStartMode = mode
 		case "system-proxy-auto":
-			o.SystemProxyAuto = parseBool(value, o.SystemProxyAuto)
+			enabled, err := parseBool(value, o.SystemProxyAuto)
+			if err != nil {
+				return o, fmt.Errorf("invalid system-proxy-auto: %w", err)
+			}
+			o.SystemProxyAuto = enabled
 		case "selector-menu-layout":
 			switch strings.ToLower(value) {
 			case "flat", "nested":
@@ -153,7 +173,11 @@ func LoadOptions(path string) (Options, error) {
 				o.SelectorMenuLayout = "auto"
 			}
 		case "selector-persist":
-			o.SelectorPersist = parseBool(value, o.SelectorPersist)
+			enabled, err := parseBool(value, o.SelectorPersist)
+			if err != nil {
+				return o, fmt.Errorf("invalid selector-persist: %w", err)
+			}
+			o.SelectorPersist = enabled
 		case "log-file":
 			o.LogFile = value
 		}
