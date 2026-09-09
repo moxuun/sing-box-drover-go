@@ -2,8 +2,8 @@
 
 - `cmd/sing-box-drover`：程序入口；
 - `internal/app`：应用编排；
-- `internal/config`：INI、JSON、TUN 过滤和 BPF 配置读取；
-- `internal/clash`：选择器读取、切换和状态持久化；
+- `internal/config`：INI、JSON 读取和 TUN 过滤；
+- `internal/clash`：Clash API 访问、选择器读取和切换；
 - `internal/core`：所管理的 `sing-box.exe` 生命周期；
 - `internal/tray`：原生 Win32 托盘和选择器菜单渲染；
 - `internal/windows`：系统代理、提权、单实例和开机启动；

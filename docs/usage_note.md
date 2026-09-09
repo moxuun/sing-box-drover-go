@@ -2,7 +2,7 @@
 
 本地运行文件统一放在 `output`。将 `sing-box.exe`、从
 `examples/sing-box-drover.ini` 复制并改名得到的 `sing-box-drover.ini`，以及
-`config.json`（或 `.bpf` 配置）放在控制器旁边。也可以通过 `sb-dir` 和
+`config.json` 放在控制器旁边。也可以通过 `sb-dir` 和
 `sb-config-file` 指向其他位置。控制器通过标准输入把运行时 JSON 交给内核，
 切换 TUN 或系统代理时不会改写源配置。
 
@@ -12,7 +12,7 @@
 
 ## 首次在 Windows 上测试
 
-准备一个干净的测试目录，放入控制器、目标内核和真实 JSON/BPF 配置。首次
+准备一个干净的测试目录，放入控制器、目标内核和真实 JSON 配置。首次
 启动前，建议在 `sing-box-drover.ini` 中临时使用：
 
 ```ini
@@ -34,9 +34,8 @@ provider 展开的节点；当前 `now` 项会被勾选。选择节点后，控�
 `PUT /proxies/<selector>`，再要求内核清理旧连接。API 暂时失败时仍保留上次
 成功读取的菜单数据。
 
-启用 `selector-persist = on` 后，选择结果保存在
-`sing-box-drover.state.json`。只有保存值仍存在于该选择器当前的 `all` 列表时
-才会恢复，否则以 API 当前的 `now` 为准。
+选择器是否记忆由 sing-box 自身配置决定；控制器不会额外写入独立的状态文件，
+也不会修改源配置。旧配置中的 `selector-persist` 项会被忽略。
 
 普通单击托盘图标切换系统代理，按住 Shift 单击切换 TUN。TUN、任务计划程序
 开机启动和其他特权操作仅在需要时请求提权。子内核无控制台窗口，受 Windows

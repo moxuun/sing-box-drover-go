@@ -12,7 +12,6 @@ import (
 	"sing-box-drover/internal/clash"
 	"sing-box-drover/internal/config"
 	"sing-box-drover/internal/core"
-	"sing-box-drover/internal/state"
 	platform "sing-box-drover/internal/windows"
 )
 
@@ -98,66 +97,6 @@ func TestStartupTunRequested(t *testing.T) {
 	}
 }
 
-func TestRefreshSelectorsRestoresOnlyExistingOptions(t *testing.T) {
-	var switched []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			_, _ = w.Write([]byte(`{"proxies":{"proxy":{"type":"Selector","all":["机场A","香港01"],"now":"机场A"},"other":{"type":"Selector","all":["东京01"],"now":"东京01"}}}`))
-		case http.MethodPut:
-			switched = append(switched, r.URL.Path)
-			w.WriteHeader(http.StatusNoContent)
-		case http.MethodDelete:
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-	stateFile := state.Load(t.TempDir() + "/state.json")
-	if err := stateFile.SyncSelectors(map[string]string{"proxy": "香港01", "other": "不存在"}, []string{"proxy", "other"}); err != nil {
-		t.Fatal(err)
-	}
-	a := &App{
-		options:   config.Options{SelectorPersist: true},
-		state:     stateFile,
-		api:       clash.NewClient(server.URL, "token"),
-		selectors: []clash.Selector{{Name: "old", All: []string{"x"}, Now: "x"}},
-		events:    make(chan Event, 4),
-	}
-	got, err := a.RefreshSelectors(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 2 || got[0].Now != "香港01" || got[1].Now != "东京01" {
-		t.Fatalf("restored selectors mismatch: %#v", got)
-	}
-	if !a.apiReady {
-		t.Fatal("successful Clash API request did not mark it ready")
-	}
-	if len(switched) != 1 || switched[0] != "/proxies/proxy" {
-		t.Fatalf("unexpected restore requests: %#v", switched)
-	}
-	if saved, ok := stateFile.GetSelector("other"); !ok || saved != "东京01" {
-		t.Fatalf("stale state was not reconciled: %q %v", saved, ok)
-	}
-}
-
-func TestApplyPersistedStaticIgnoresStaleOptions(t *testing.T) {
-	saved := state.Load(t.TempDir() + "/state.json")
-	if err := saved.SyncSelectors(map[string]string{"proxy": "香港01", "other": "不存在"}, []string{"proxy", "other"}); err != nil {
-		t.Fatal(err)
-	}
-	selectors := []clash.Selector{
-		{Name: "proxy", All: []string{"机场A", "香港01"}, Now: "机场A"},
-		{Name: "other", All: []string{"东京01"}, Now: "东京01"},
-	}
-	applyPersistedStatic(selectors, saved)
-	if selectors[0].Now != "香港01" || selectors[1].Now != "东京01" {
-		t.Fatalf("static persistence mismatch: %#v", selectors)
-	}
-}
-
 func TestRefreshSelectorsKeepsCacheWhenAPIFails(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +119,7 @@ func TestRefreshSelectorsKeepsCacheWhenAPIFails(t *testing.T) {
 	}
 }
 
-func TestAPIPollCancellationStopsStaleRetryAndRestore(t *testing.T) {
+func TestAPIPollCancellationStopsStaleRetry(t *testing.T) {
 	var calls atomic.Int32
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -193,7 +132,6 @@ func TestAPIPollCancellationStopsStaleRetryAndRestore(t *testing.T) {
 	defer server.Close()
 	a := &App{
 		api:       clash.NewClient(server.URL, "token"),
-		options:   config.Options{SelectorPersist: true},
 		selectors: []clash.Selector{{Name: "cached", All: []string{"old"}, Now: "old"}},
 		events:    make(chan Event, 1),
 	}

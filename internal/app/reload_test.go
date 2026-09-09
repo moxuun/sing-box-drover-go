@@ -9,7 +9,6 @@ import (
 
 	"sing-box-drover/internal/clash"
 	"sing-box-drover/internal/config"
-	"sing-box-drover/internal/state"
 )
 
 const reloadConfigJSON = `{
@@ -46,25 +45,19 @@ func writeReloadSource(t *testing.T, path, text string) {
 func TestReadConfigCandidateReloadsJSONAndPreservesRuntimeFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	writeReloadSource(t, path, reloadConfigJSON)
-	stateFile := state.Load(filepath.Join(t.TempDir(), "state.json"))
-	if err := stateFile.SyncSelectors(map[string]string{"proxy": "node2"}, []string{"proxy"}); err != nil {
-		t.Fatal(err)
-	}
 	a := &App{
-		source:  config.ConfigSource{FilePath: path},
-		options: config.Options{SelectorPersist: true},
-		state:   stateFile,
+		source: config.ConfigSource{FilePath: path},
 	}
 
 	candidate, err := a.readConfigCandidate(false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if candidate.source.IsBPF() || candidate.config.ProxyPort != 1080 || candidate.tun {
+	if candidate.config.ProxyPort != 1080 || candidate.tun {
 		t.Fatalf("unexpected JSON candidate: %#v", candidate)
 	}
-	if len(candidate.selectors) != 1 || candidate.selectors[0].Now != "node2" {
-		t.Fatalf("selector persistence was not applied: %#v", candidate.selectors)
+	if len(candidate.selectors) != 1 || candidate.selectors[0].Now != "node1" {
+		t.Fatalf("selector default was not preserved: %#v", candidate.selectors)
 	}
 	var runtime map[string]any
 	if err := json.Unmarshal([]byte(candidate.config.JSONWithTUN), &runtime); err != nil {
@@ -83,30 +76,6 @@ func TestReadConfigCandidateReloadsJSONAndPreservesRuntimeFields(t *testing.T) {
 	}
 }
 
-func TestReadConfigCandidateReloadsBPFProfile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.bpf")
-	profile := config.CreateRemoteBPF(reloadConfigJSON, "profile", "https://example.test/config.json", true, 15, 42)
-	data, err := config.EncodeBPF(profile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	a := &App{source: config.ConfigSource{FilePath: path}}
-
-	candidate, err := a.readConfigCandidate(false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !candidate.source.IsBPF() || candidate.source.BPFProfile != profile {
-		t.Fatalf("BPF profile was not reloaded intact: %#v", candidate.source)
-	}
-	if !strings.Contains(candidate.config.JSONWithTUN, `"future_section"`) || !strings.Contains(candidate.config.JSONWithTUN, `"providers"`) {
-		t.Fatalf("BPF config fields were lost: %s", candidate.config.JSONWithTUN)
-	}
-}
-
 func TestRestartWithConfigKeepsOldStateWhenPreflightFails(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	writeReloadSource(t, path, `{"inbounds":[`) // invalid JSON must fail before a supervisor is touched.
@@ -117,17 +86,16 @@ func TestRestartWithConfigKeepsOldStateWhenPreflightFails(t *testing.T) {
 	}
 	oldSelectors := []clash.Selector{{Name: "proxy", All: []string{"old"}, Now: "old"}}
 	a := &App{
-		source:    config.ConfigSource{FilePath: path, Format: config.ConfigSourceJSON, JSONText: `{"old":true}`},
+		source:    config.ConfigSource{FilePath: path, JSONText: `{"old":true}`},
 		config:    oldConfig,
 		selectors: oldSelectors,
-		restored:  true,
 	}
 
 	if err := a.restartWithConfig(false, false); err == nil {
 		t.Fatal("invalid configuration unexpectedly passed preflight")
 	}
-	if a.source.JSONText != `{"old":true}` || a.config.JSONWithoutTUN != oldConfig.JSONWithoutTUN || !a.restored {
-		t.Fatalf("old config state changed after preflight failure: source=%#v config=%#v restored=%v", a.source, a.config, a.restored)
+	if a.source.JSONText != `{"old":true}` || a.config.JSONWithoutTUN != oldConfig.JSONWithoutTUN {
+		t.Fatalf("old config state changed after preflight failure: source=%#v config=%#v", a.source, a.config)
 	}
 	if got := a.Selectors(); len(got) != 1 || got[0].Now != "old" {
 		t.Fatalf("old selector state changed after preflight failure: %#v", got)

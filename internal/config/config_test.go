@@ -84,29 +84,17 @@ func TestReadSingBoxConfigProviderOnlySelectorAddsRuntimeAPI(t *testing.T) {
 	}
 }
 
-func TestReadConfigSourceBPFAndBOM(t *testing.T) {
+func TestReadConfigSourceStripsBOM(t *testing.T) {
 	dir := t.TempDir()
 	jsonPath := filepath.Join(dir, "config.json")
 	if err := os.WriteFile(jsonPath, append([]byte{0xef, 0xbb, 0xbf}, []byte(`{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":1}]}`)...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	jsonSource, err := ReadConfigSource(jsonPath)
-	if err != nil || jsonSource.IsBPF() || strings.HasPrefix(jsonSource.JSONText, "\ufeff") {
+	if err != nil || strings.HasPrefix(jsonSource.JSONText, "\ufeff") {
 		t.Fatalf("BOM source mismatch: %#v %v", jsonSource, err)
 	}
-	bpfPath := filepath.Join(dir, "config.bpf")
-	data, err := EncodeBPF(CreateLocalBPF(jsonSource.JSONText, "local"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(bpfPath, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	bpfSource, err := ReadConfigSource(bpfPath)
-	if err != nil || !bpfSource.IsBPF() || bpfSource.JSONText != jsonSource.JSONText {
-		t.Fatalf("BPF source mismatch: %#v %v", bpfSource, err)
-	}
 	if _, err := ReadSingBoxConfig("\ufeff" + jsonSource.JSONText); err != nil {
-		t.Fatalf("BOM in BPF payload should be accepted: %v", err)
+		t.Fatalf("BOM JSON should be accepted: %v", err)
 	}
 }

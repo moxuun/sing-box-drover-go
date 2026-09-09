@@ -21,7 +21,6 @@ type configSnapshot struct {
 	config    config.SingBoxConfig
 	api       *clash.Client
 	selectors []clash.Selector
-	restored  bool
 }
 
 func (a *App) readConfigCandidate(tun, requireTun bool) (configCandidate, error) {
@@ -47,9 +46,6 @@ func (a *App) readConfigCandidate(tun, requireTun bool) (configCandidate, error)
 	}
 
 	selectors := staticSelectors(sbConfig.Selectors)
-	if a.options.SelectorPersist {
-		applyPersistedStatic(selectors, a.state)
-	}
 	var api *clash.Client
 	if sbConfig.ClashAPI.IsConfigured() {
 		api = clash.NewClient(sbConfig.ClashAPI.ExternalController, sbConfig.ClashAPI.Secret)
@@ -78,14 +74,12 @@ func (a *App) applyConfigCandidate(candidate configCandidate) configSnapshot {
 		config:    a.config,
 		api:       a.api,
 		selectors: cloneSelectors(a.selectors),
-		restored:  a.restored,
 	}
 	a.source = candidate.source
 	a.config = candidate.config
 	a.api = candidate.api
 	a.apiReady = false
 	a.selectors = cloneSelectors(candidate.selectors)
-	a.restored = false
 	return previous
 }
 
@@ -95,7 +89,6 @@ func (a *App) restoreConfigSnapshot(snapshot configSnapshot) {
 	a.config = snapshot.config
 	a.api = snapshot.api
 	a.selectors = cloneSelectors(snapshot.selectors)
-	a.restored = snapshot.restored
 	a.mu.Unlock()
 }
 

@@ -13,21 +13,10 @@ import (
 	"strings"
 )
 
-type ConfigSourceFormat string
-
-const (
-	ConfigSourceJSON ConfigSourceFormat = "json"
-	ConfigSourceBPF  ConfigSourceFormat = "bpf"
-)
-
 type ConfigSource struct {
-	FilePath   string
-	Format     ConfigSourceFormat
-	JSONText   string
-	BPFProfile BPFProfile
+	FilePath string
+	JSONText string
 }
-
-func (s ConfigSource) IsBPF() bool { return s.Format == ConfigSourceBPF }
 
 type Selector struct {
 	Name         string
@@ -61,7 +50,6 @@ type Options struct {
 	TunStartMode       string
 	SystemProxyAuto    bool
 	SelectorMenuLayout string
-	SelectorPersist    bool
 	LogFile            string
 	BaseDir            string
 }
@@ -69,7 +57,7 @@ type Options struct {
 const defaultHomepageURL = "https://github.com/hdrover/sing-box-drover"
 
 func DefaultOptions() Options {
-	return Options{SBConfigFile: "config.json", HomepageURL: defaultHomepageURL, TunStartMode: "off", SelectorMenuLayout: "auto", SelectorPersist: true}
+	return Options{SBConfigFile: "config.json", HomepageURL: defaultHomepageURL, TunStartMode: "off", SelectorMenuLayout: "auto"}
 }
 
 func validateHomepageURL(value string) error {
@@ -172,12 +160,6 @@ func LoadOptions(path string) (Options, error) {
 			default:
 				o.SelectorMenuLayout = "auto"
 			}
-		case "selector-persist":
-			enabled, err := parseBool(value, o.SelectorPersist)
-			if err != nil {
-				return o, fmt.Errorf("invalid selector-persist: %w", err)
-			}
-			o.SelectorPersist = enabled
 		case "log-file":
 			o.LogFile = value
 		}
@@ -248,17 +230,7 @@ func ReadConfigSource(path string) (ConfigSource, error) {
 		}
 		return ConfigSource{}, fmt.Errorf("failed to read configuration file: %w", err)
 	}
-	s := ConfigSource{FilePath: path, Format: ConfigSourceJSON}
-	if LooksLikeBPF(data) {
-		p, err := DecodeBPF(data)
-		if err != nil {
-			return ConfigSource{}, err
-		}
-		s.Format, s.BPFProfile, s.JSONText = ConfigSourceBPF, p, p.ConfigJSON
-		return s, nil
-	}
-	s.JSONText = readUTF8(data)
-	return s, nil
+	return ConfigSource{FilePath: path, JSONText: readUTF8(data)}, nil
 }
 
 func valueString(v any) string {

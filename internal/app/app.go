@@ -14,7 +14,6 @@ import (
 	"sing-box-drover/internal/config"
 	"sing-box-drover/internal/core"
 	"sing-box-drover/internal/logging"
-	"sing-box-drover/internal/state"
 	platform "sing-box-drover/internal/windows"
 )
 
@@ -124,7 +123,6 @@ type App struct {
 	source        config.ConfigSource
 	config        config.SingBoxConfig
 	logger        *logging.Logger
-	state         *state.File
 	api           *clash.Client
 	apiReady      bool
 	supervisor    *core.Supervisor
@@ -133,9 +131,7 @@ type App struct {
 	flags         Flags
 	tunActive     bool
 	proxyActive   bool
-	restored      bool
 	closed        bool
-	updateStop    context.CancelFunc
 	apiPollCancel context.CancelFunc
 	events        chan Event
 
@@ -198,11 +194,7 @@ func NewAt(executable string, args []string) (*App, error) {
 		logger.Close()
 		return nil, fmt.Errorf("sing-box executable not found: %w", err)
 	}
-	appState := state.Load(filepath.Join(processDir, "sing-box-drover.state.json"))
 	selectors := staticSelectors(sbConfig.Selectors)
-	if options.SelectorPersist || flags.Restart {
-		applyPersistedStatic(selectors, appState)
-	}
 	app := &App{
 		executable: executable,
 		processDir: processDir,
@@ -210,7 +202,6 @@ func NewAt(executable string, args []string) (*App, error) {
 		source:     source,
 		config:     sbConfig,
 		logger:     logger,
-		state:      appState,
 		instance:   instance,
 		selectors:  selectors,
 		flags:      flags,
@@ -249,14 +240,6 @@ func NewAt(executable string, args []string) (*App, error) {
 		app.Close()
 		return nil, err
 	}
-	if source.IsBPF() && source.BPFProfile.IsRemote() && source.BPFProfile.AutoUpdate {
-		ctx, cancel := context.WithCancel(context.Background())
-		app.updateStop = cancel
-		updater := &config.BPFUpdater{Path: source.FilePath, Profile: source.BPFProfile, UserAgent: "sing-box-drover", Logf: func(format string, values ...any) {
-			logger.Log("ConfigUpdater", fmt.Sprintf(format, values...))
-		}}
-		go updater.Run(ctx)
-	}
 	return app, nil
 }
 
@@ -272,18 +255,6 @@ func staticSelectors(values []config.Selector) []clash.Selector {
 		result = append(result, selector)
 	}
 	return result
-}
-
-func applyPersistedStatic(selectors []clash.Selector, saved *state.File) {
-	if saved == nil {
-		return
-	}
-	for i := range selectors {
-		value, ok := saved.GetSelector(selectors[i].Name)
-		if ok && clash.ContainsOption(selectors[i], value) {
-			selectors[i].Now = value
-		}
-	}
 }
 
 func (a *App) runtimeConfig(tun bool) string {
@@ -452,69 +423,7 @@ func (a *App) RefreshSelectors(ctx context.Context) ([]clash.Selector, error) {
 	a.selectors = cloneSelectors(fresh)
 	a.apiReady = true
 	a.mu.Unlock()
-	if a.options.SelectorPersist {
-		a.restorePersisted(ctx, fresh)
-	}
 	return a.Selectors(), nil
-}
-
-func (a *App) restorePersisted(ctx context.Context, selectors []clash.Selector) {
-	a.mu.Lock()
-	if a.restored {
-		a.mu.Unlock()
-		a.persistSelectors(selectors)
-		return
-	}
-	a.restored = true
-	a.mu.Unlock()
-	values := make(map[string]string, len(selectors))
-	for _, selector := range selectors {
-		selected := selector.Now
-		if saved, ok := selectorState(a.state, selector.Name); ok {
-			if clash.ContainsOption(selector, saved) {
-				if saved != selector.Now {
-					if err := a.api.SwitchSelector(ctx, selector.Name, saved); err == nil {
-						selected = saved
-					}
-				}
-			} // stale saved options intentionally fall back to API's now value.
-		}
-		if selected != "" {
-			values[selector.Name] = selected
-		}
-	}
-	a.mu.Lock()
-	for i := range a.selectors {
-		if value, ok := values[a.selectors[i].Name]; ok {
-			a.selectors[i].Now = value
-		}
-	}
-	a.mu.Unlock()
-	a.persistSelectors(a.Selectors())
-}
-
-func selectorState(saved *state.File, name string) (string, bool) {
-	if saved == nil {
-		return "", false
-	}
-	return saved.GetSelector(name)
-}
-
-func (a *App) persistSelectors(selectors []clash.Selector) {
-	if a.state == nil {
-		return
-	}
-	values := make(map[string]string, len(selectors))
-	scope := make([]string, 0, len(selectors))
-	for _, selector := range selectors {
-		scope = append(scope, selector.Name)
-		if selector.Now != "" {
-			values[selector.Name] = selector.Now
-		}
-	}
-	if err := a.state.SyncSelectors(values, scope); err != nil {
-		a.logger.Log("State", "failed to persist selector state: "+err.Error())
-	}
 }
 
 func (a *App) SwitchSelector(ctx context.Context, selectorName, value string) error {
@@ -546,9 +455,6 @@ func (a *App) SwitchSelector(ctx context.Context, selectorName, value string) er
 		}
 	}
 	a.mu.Unlock()
-	if a.options.SelectorPersist {
-		a.persistSelectors(a.Selectors())
-	}
 	return nil
 }
 
@@ -603,7 +509,6 @@ func (a *App) Restart() error {
 	defer a.selectorMu.Unlock()
 	// Start a replacement controller so repeated restarts do not retain the
 	// old controller's Go heap and runtime resources.
-	a.persistSelectors(a.Selectors())
 	flags := "-restart"
 	if a.TunActive() {
 		flags += " -tun"
@@ -659,12 +564,6 @@ func (a *App) RecoverAfterResume(ctx context.Context) error {
 	return nil
 }
 
-func (a *App) resetRestoration() {
-	a.mu.Lock()
-	a.restored = false
-	a.mu.Unlock()
-}
-
 func (a *App) LaunchElevated(tun bool) error {
 	flags := "-restart"
 	if tun {
@@ -702,8 +601,6 @@ func (a *App) Close() error {
 	a.closed = true
 	pollCancel := a.apiPollCancel
 	a.apiPollCancel = nil
-	stop := a.updateStop
-	a.updateStop = nil
 	instance := a.instance
 	a.instance = nil
 	proxyActive := a.proxyActive
@@ -712,9 +609,6 @@ func (a *App) Close() error {
 	a.selectorMu.Unlock()
 	if pollCancel != nil {
 		pollCancel()
-	}
-	if stop != nil {
-		stop()
 	}
 	if a.options.SystemProxyAuto && proxyActive {
 		_ = platform.DisableSystemProxy()
