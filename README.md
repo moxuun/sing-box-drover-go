@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/moxuun/sing-box-dover-go)](https://github.com/moxuun/sing-box-dover-go/releases)
-[![Build](https://github.com/moxuun/sing-box-dover-go/actions/workflows/ci.yml/badge.svg)](https://github.com/moxuun/sing-box-dover-go/actions/workflows/ci.yml)
+
 
 本项目是 [`hdrover/sing-box-drover`](https://github.com/hdrover/sing-box-drover) 的 Go/Win32 重构版。它保留了原项目使用外置 sing-box.exe 内核，通过 Windows 托盘控制系统代理、TUN 和出站选择器”的核心定位，并针对 reF1nd 等兼容内核的 provider 节点展开方式进行了适配。
 
