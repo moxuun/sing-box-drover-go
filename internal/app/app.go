@@ -146,6 +146,7 @@ type App struct {
 	systemProxyEnabler  func(string, int) (platform.ProxySession, error)
 	systemProxyRestorer func(platform.ProxySession) (bool, error)
 	selfLauncher        func(string, bool) error
+	configChecker       func(string) error
 }
 
 func New(args []string) (*App, error) {
@@ -219,6 +220,7 @@ func NewAt(executable string, args []string) (*App, error) {
 		app.api = clash.NewClient(sbConfig.ClashAPI.ExternalController, sbConfig.ClashAPI.Secret)
 	}
 	app.supervisor = core.NewSupervisor(corePath, logger)
+	app.configChecker = app.supervisor.Check
 	app.supervisor.SetHandler(func(event core.Event) {
 		app.handleCoreEvent(event)
 	})
@@ -546,8 +548,12 @@ func (a *App) Restart() error {
 	defer a.selectorMu.Unlock()
 	// Start a replacement controller so repeated restarts do not retain the
 	// old controller's Go heap and runtime resources.
+	tun := a.TunActive()
+	if _, err := a.checkConfigCandidate(tun, false); err != nil {
+		return err
+	}
 	flags := "-restart"
-	if a.TunActive() {
+	if tun {
 		flags += " -tun"
 	}
 	return a.launchReplacement(flags, platform.IsProcessElevated())
@@ -602,6 +608,9 @@ func (a *App) RecoverAfterResume(ctx context.Context) error {
 }
 
 func (a *App) LaunchElevated(tun bool) error {
+	if _, err := a.checkConfigCandidate(tun, tun); err != nil {
+		return err
+	}
 	flags := "-restart"
 	if tun {
 		flags += " -tun"

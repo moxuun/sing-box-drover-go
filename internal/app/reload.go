@@ -24,9 +24,6 @@ type configSnapshot struct {
 }
 
 func (a *App) readConfigCandidate(tun, requireTun bool) (configCandidate, error) {
-	if tun && !platform.IsProcessElevated() {
-		return configCandidate{}, platform.ErrElevationRequired
-	}
 	path := a.source.FilePath
 	if path == "" {
 		path = a.options.SBConfigFile
@@ -57,6 +54,24 @@ func (a *App) readConfigCandidate(tun, requireTun bool) (configCandidate, error)
 		selectors: selectors,
 		tun:       tun,
 	}, nil
+}
+
+func (a *App) checkConfigCandidate(tun, requireTun bool) (configCandidate, error) {
+	candidate, err := a.readConfigCandidate(tun, requireTun)
+	if err != nil {
+		return configCandidate{}, err
+	}
+	check := a.configChecker
+	if check == nil && a.supervisor != nil {
+		check = a.supervisor.Check
+	}
+	if check == nil {
+		return configCandidate{}, errors.New("core configuration checker is not configured")
+	}
+	if err := check(runtimeConfigFor(candidate.config, candidate.tun)); err != nil {
+		return configCandidate{}, err
+	}
+	return candidate, nil
 }
 
 func runtimeConfigFor(cfg config.SingBoxConfig, tun bool) string {
@@ -93,9 +108,12 @@ func (a *App) restoreConfigSnapshot(snapshot configSnapshot) {
 }
 
 func (a *App) restartWithConfig(tun, requireTun bool) error {
-	candidate, err := a.readConfigCandidate(tun, requireTun)
+	candidate, err := a.checkConfigCandidate(tun, requireTun)
 	if err != nil {
 		return err
+	}
+	if candidate.tun && !platform.IsProcessElevated() {
+		return platform.ErrElevationRequired
 	}
 	if a.supervisor == nil {
 		return errors.New("core supervisor is not configured")

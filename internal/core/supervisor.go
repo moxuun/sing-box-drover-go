@@ -16,6 +16,7 @@ import (
 const MaxCapturedOutput = 8 << 10
 
 const startupGracePeriod = 750 * time.Millisecond
+const configCheckTimeout = 30 * time.Second
 
 type State int
 
@@ -119,6 +120,31 @@ func (s *Supervisor) notify(event Event) {
 	if handler != nil {
 		handler(event)
 	}
+}
+
+// Check asks the configured sing-box executable to validate the exact runtime
+// JSON without disturbing the currently managed process.
+func (s *Supervisor) Check(configJSON string) error {
+	if strings.TrimSpace(s.exePath) == "" {
+		return errors.New("sing-box executable path is empty")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), configCheckTimeout)
+	defer cancel()
+	output := &boundedBuffer{}
+	cmd := exec.CommandContext(ctx, s.exePath, "--disable-color", "check", "-c", "stdin")
+	cmd.Dir = executableDir(s.exePath)
+	cmd.Stdin = strings.NewReader(configJSON)
+	cmd.Stdout = io.MultiWriter(output)
+	cmd.Stderr = io.MultiWriter(output)
+	configureCommand(cmd)
+	if err := cmd.Run(); err != nil {
+		message := "sing-box configuration check failed: " + err.Error()
+		if detail := strings.TrimSpace(output.String()); detail != "" {
+			message += "\n" + criticalOutput(detail)
+		}
+		return errors.New(message)
+	}
+	return nil
 }
 
 func (s *Supervisor) setState(state State, message string) {

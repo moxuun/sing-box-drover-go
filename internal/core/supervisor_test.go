@@ -81,6 +81,31 @@ func TestBoundedBufferKeepsTail(t *testing.T) {
 	}
 }
 
+func TestSupervisorCheckRejectsMissingExecutable(t *testing.T) {
+	supervisor := NewSupervisor("", nil)
+	if err := supervisor.Check(`{}`); err == nil {
+		t.Fatal("empty executable path unexpectedly passed configuration check")
+	}
+}
+
+func TestSupervisorCheckWithRealSingBox(t *testing.T) {
+	exePath := os.Getenv("SING_BOX_DROVER_TEST_CORE")
+	if exePath == "" {
+		t.Skip("set SING_BOX_DROVER_TEST_CORE to run the real sing-box configuration check")
+	}
+	supervisor := NewSupervisor(exePath, nil)
+	if err := supervisor.Check(`{}`); err != nil {
+		t.Fatalf("minimal configuration check failed: %v", err)
+	}
+	err := supervisor.Check(`{"inbounds":[{"type":"definitely-invalid","tag":"bad"}]}`)
+	if err == nil {
+		t.Fatal("semantic configuration error unexpectedly passed sing-box check")
+	}
+	if !strings.Contains(err.Error(), "sing-box configuration check failed") {
+		t.Fatalf("configuration check error lacks context: %v", err)
+	}
+}
+
 func TestSupervisorReportsUnexpectedExitWithBoundedDiagnostics(t *testing.T) {
 	if _, err := os.Stat("/bin/sh"); err != nil {
 		t.Skip("requires a POSIX shell for the portable lifecycle fixture")
