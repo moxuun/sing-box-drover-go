@@ -394,3 +394,36 @@ func TestReplacementLaunchFailureReenablesSystemProxy(t *testing.T) {
 		t.Fatalf("proxy was not recovered after launch failure: enabled=%d active=%v", enabled, a.SystemProxyActive())
 	}
 }
+
+func TestClosedControllerRejectsLifecycleAndSelectorOperations(t *testing.T) {
+	launched := false
+	a := &App{
+		closed: true,
+		selfLauncher: func(string, bool) error {
+			launched = true
+			return nil
+		},
+		configChecker: func(string) error {
+			t.Fatal("closed controller ran configuration check")
+			return nil
+		},
+	}
+	if err := a.Restart(); !errors.Is(err, errControllerClosed) {
+		t.Fatalf("Restart() error = %v, want closed error", err)
+	}
+	if err := a.ToggleTun(true); !errors.Is(err, errControllerClosed) {
+		t.Fatalf("ToggleTun() error = %v, want closed error", err)
+	}
+	if err := a.LaunchElevated(true); !errors.Is(err, errControllerClosed) {
+		t.Fatalf("LaunchElevated() error = %v, want closed error", err)
+	}
+	if err := a.LaunchAutostartElevated(true); !errors.Is(err, errControllerClosed) {
+		t.Fatalf("LaunchAutostartElevated() error = %v, want closed error", err)
+	}
+	if err := a.SwitchSelector(context.Background(), "proxy", "node"); !errors.Is(err, errControllerClosed) {
+		t.Fatalf("SwitchSelector() error = %v, want closed error", err)
+	}
+	if launched {
+		t.Fatal("closed controller launched a replacement")
+	}
+}

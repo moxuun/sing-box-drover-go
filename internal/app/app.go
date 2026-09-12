@@ -20,6 +20,7 @@ import (
 var (
 	ErrAlreadyRunning   = errors.New("sing-box-drover is already running")
 	ErrElevationHandoff = errors.New("elevated sing-box-drover instance launched")
+	errControllerClosed = errors.New("controller is closed")
 )
 
 type Flags struct {
@@ -409,14 +410,21 @@ func (a *App) Options() config.Options { return a.options }
 func (a *App) Flags() Flags            { return a.flags }
 func (a *App) Events() <-chan Event    { return a.events }
 
-func (a *App) RefreshSelectors(ctx context.Context) ([]clash.Selector, error) {
-	a.selectorMu.Lock()
-	defer a.selectorMu.Unlock()
+func (a *App) ensureOpen() error {
 	a.mu.RLock()
 	closed := a.closed
 	a.mu.RUnlock()
 	if closed {
-		return a.Selectors(), errors.New("controller is closed")
+		return errControllerClosed
+	}
+	return nil
+}
+
+func (a *App) RefreshSelectors(ctx context.Context) ([]clash.Selector, error) {
+	a.selectorMu.Lock()
+	defer a.selectorMu.Unlock()
+	if err := a.ensureOpen(); err != nil {
+		return a.Selectors(), err
 	}
 	if a.api == nil {
 		return a.Selectors(), errors.New("Clash API is not configured")
@@ -425,11 +433,8 @@ func (a *App) RefreshSelectors(ctx context.Context) ([]clash.Selector, error) {
 	if err != nil {
 		return a.Selectors(), err
 	}
-	a.mu.RLock()
-	closed = a.closed
-	a.mu.RUnlock()
-	if closed {
-		return a.Selectors(), errors.New("controller is closed")
+	if err := a.ensureOpen(); err != nil {
+		return a.Selectors(), err
 	}
 	a.mu.Lock()
 	a.selectors = cloneSelectors(fresh)
@@ -441,6 +446,9 @@ func (a *App) RefreshSelectors(ctx context.Context) ([]clash.Selector, error) {
 func (a *App) SwitchSelector(ctx context.Context, selectorName, value string) error {
 	a.selectorMu.Lock()
 	defer a.selectorMu.Unlock()
+	if err := a.ensureOpen(); err != nil {
+		return err
+	}
 	if a.api == nil {
 		return errors.New("Clash API is not configured")
 	}
@@ -542,12 +550,18 @@ func (a *App) restoreSystemProxyLocked() (bool, error) {
 func (a *App) ToggleTun(enabled bool) error {
 	a.selectorMu.Lock()
 	defer a.selectorMu.Unlock()
+	if err := a.ensureOpen(); err != nil {
+		return err
+	}
 	return a.restartWithConfig(enabled, enabled)
 }
 
 func (a *App) Restart() error {
 	a.selectorMu.Lock()
 	defer a.selectorMu.Unlock()
+	if err := a.ensureOpen(); err != nil {
+		return err
+	}
 	// Start a replacement controller so repeated restarts do not retain the
 	// old controller's Go heap and runtime resources.
 	tun := a.TunActive()
@@ -648,6 +662,11 @@ func (a *App) RecoverAfterResume(ctx context.Context) error {
 }
 
 func (a *App) LaunchElevated(tun bool) error {
+	a.selectorMu.Lock()
+	defer a.selectorMu.Unlock()
+	if err := a.ensureOpen(); err != nil {
+		return err
+	}
 	if _, err := a.checkConfigCandidate(tun, tun); err != nil {
 		return err
 	}
@@ -660,6 +679,11 @@ func (a *App) LaunchElevated(tun bool) error {
 
 func (a *App) QueryAutostart() (platform.AutostartState, error) { return platform.QueryAutostart() }
 func (a *App) LaunchAutostartElevated(enabled bool) error {
+	a.selectorMu.Lock()
+	defer a.selectorMu.Unlock()
+	if err := a.ensureOpen(); err != nil {
+		return err
+	}
 	tun := a.TunActive()
 	if _, err := a.checkConfigCandidate(tun, false); err != nil {
 		return err
@@ -702,6 +726,11 @@ func (a *App) launchReplacement(flags string, elevated bool) error {
 }
 
 func (a *App) SetAutostart(enabled bool) error {
+	a.selectorMu.Lock()
+	defer a.selectorMu.Unlock()
+	if err := a.ensureOpen(); err != nil {
+		return err
+	}
 	if !platform.IsProcessElevated() {
 		return platform.ErrElevationRequired
 	}
