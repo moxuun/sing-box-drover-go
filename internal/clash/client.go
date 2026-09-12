@@ -53,6 +53,9 @@ func (c *Client) Do(ctx context.Context, method, path string, body []byte) ([]by
 	if c == nil || c.BaseURL == "" {
 		return nil, errors.New("Clash API is not configured")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}

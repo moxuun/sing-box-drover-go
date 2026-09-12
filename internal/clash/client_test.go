@@ -27,6 +27,17 @@ func TestClientReusesDefaultHTTPClientAndTransport(t *testing.T) {
 	}
 }
 
+func TestClientDoAcceptsNilContext(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	if _, err := NewClient(server.URL, "secret").Do(nil, http.MethodGet, "/version", nil); err != nil {
+		t.Fatalf("Do(nil) returned an error: %v", err)
+	}
+}
+
 func TestParseSelectorsPreservesAPIOrderAndProviderNodes(t *testing.T) {
 	data := []byte(`{"proxies":{"机场A":{"type":"Selector","all":["香港01","香港02"],"now":"香港02"},"unused":{"type":"Direct","all":["x"]},"机场B":{"type":"Selector","all":["东京01","东京02"],"now":"东京01"}}}`)
 	got, err := ParseSelectors(data)
