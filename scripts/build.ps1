@@ -7,9 +7,21 @@ $Root = Split-Path -Parent $PSScriptRoot
 $OutputFile = [System.IO.Path]::GetFullPath($OutputPath, $Root)
 $ResourceFile = Join-Path $Root "cmd\sing-box-drover\resource_windows_amd64.syso"
 $OutputDirectory = Split-Path -Parent $OutputFile
+$BuildEnvironmentNames = @("GOTOOLCHAIN", "GOOS", "GOARCH", "CGO_ENABLED")
+$PreviousBuildEnvironment = @{}
+foreach ($name in $BuildEnvironmentNames) {
+    $existing = Get-Item -Path ("Env:{0}" -f $name) -ErrorAction SilentlyContinue
+    $PreviousBuildEnvironment[$name] = if ($null -eq $existing) {
+        [pscustomobject]@{ Exists = $false; Value = $null }
+    } else {
+        [pscustomobject]@{ Exists = $true; Value = $existing.Value }
+    }
+}
+$LocationPushed = $false
 
-Push-Location -LiteralPath $Root
 try {
+    Push-Location -LiteralPath $Root
+    $LocationPushed = $true
     New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
     $env:GOTOOLCHAIN = "go1.25.6"
     $env:GOOS = "windows"
@@ -38,5 +50,15 @@ try {
 }
 finally {
     Remove-Item -LiteralPath $ResourceFile -Force -ErrorAction SilentlyContinue
-    Pop-Location
+    foreach ($name in $BuildEnvironmentNames) {
+        $saved = $PreviousBuildEnvironment[$name]
+        if ($saved.Exists) {
+            Set-Item -Path ("Env:{0}" -f $name) -Value $saved.Value
+        } else {
+            Remove-Item -Path ("Env:{0}" -f $name) -ErrorAction SilentlyContinue
+        }
+    }
+    if ($LocationPushed) {
+        Pop-Location
+    }
 }
