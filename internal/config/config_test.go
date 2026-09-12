@@ -19,6 +19,13 @@ func TestNormalizeJSONKeepsCommentLikeString(t *testing.T) {
 	}
 }
 
+func TestReadSingBoxConfigRejectsUnterminatedBlockComment(t *testing.T) {
+	input := `{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":1080}]} /* missing end`
+	if _, err := ReadSingBoxConfig(input); err == nil {
+		t.Fatal("unterminated block comment was accepted")
+	}
+}
+
 func TestReadSingBoxConfigAddsRuntimeAPIAndFiltersTun(t *testing.T) {
 	input := `{
 	  // source comments remain outside generated runtime text

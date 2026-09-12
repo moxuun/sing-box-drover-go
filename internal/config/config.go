@@ -280,7 +280,11 @@ func addDefaultClashAPI(root map[string]any, cfg *SingBoxConfig) {
 func parseJSON(text string) (map[string]any, error) {
 	var root any
 	text = strings.TrimPrefix(text, "\ufeff")
-	dec := json.NewDecoder(strings.NewReader(NormalizeJSON(text)))
+	normalized, err := normalizeJSON(text)
+	if err != nil {
+		return nil, fmt.Errorf("configuration file is corrupted or contains invalid JSON: %w", err)
+	}
+	dec := json.NewDecoder(strings.NewReader(normalized))
 	dec.UseNumber()
 	if err := dec.Decode(&root); err != nil {
 		return nil, fmt.Errorf("configuration file is corrupted or contains invalid JSON: %w", err)

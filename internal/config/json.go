@@ -1,11 +1,19 @@
 package config
 
-import "strings"
+import (
+	"errors"
+	"strings"
+)
 
 // NormalizeJSON accepts the JSON-with-comments/trailing-comma form commonly
 // used by sing-box configurations. It deliberately leaves string contents
 // untouched and only removes syntax outside strings.
 func NormalizeJSON(source string) string {
+	normalized, _ := normalizeJSON(source)
+	return normalized
+}
+
+func normalizeJSON(source string) (string, error) {
 	var b strings.Builder
 	b.Grow(len(source))
 
@@ -74,5 +82,8 @@ func NormalizeJSON(source string) string {
 		b.WriteByte(ch)
 	}
 
-	return b.String()
+	if inBlockComment {
+		return b.String(), errors.New("unterminated block comment")
+	}
+	return b.String(), nil
 }
