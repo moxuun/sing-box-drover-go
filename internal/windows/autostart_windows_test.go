@@ -3,8 +3,10 @@
 package windows
 
 import (
+	"encoding/binary"
 	"testing"
 	"time"
+	"unicode/utf16"
 )
 
 func TestRunTaskSchedulerQueryIsBounded(t *testing.T) {
@@ -55,6 +57,23 @@ func TestTaskEnabledFromXML(t *testing.T) {
 func TestTaskEnabledFromXMLRejectsMalformedData(t *testing.T) {
 	if _, err := taskEnabledFromXML([]byte(`<Task>`)); err == nil {
 		t.Fatal("malformed task XML unexpectedly parsed")
+	}
+}
+
+func TestTaskEnabledFromUTF16XML(t *testing.T) {
+	text := `<?xml version="1.0" encoding="UTF-16"?><Task><Settings><Enabled>false</Enabled></Settings></Task>`
+	units := utf16.Encode([]rune(text))
+	data := make([]byte, 2+len(units)*2)
+	data[0], data[1] = 0xff, 0xfe
+	for i, unit := range units {
+		binary.LittleEndian.PutUint16(data[2+i*2:], unit)
+	}
+	got, err := taskEnabledFromXML(data)
+	if err != nil {
+		t.Fatalf("taskEnabledFromXML() UTF-16 error = %v", err)
+	}
+	if got {
+		t.Fatal("UTF-16 disabled task was reported as enabled")
 	}
 }
 

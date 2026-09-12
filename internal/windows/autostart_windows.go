@@ -5,14 +5,17 @@ package windows
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf16"
 )
 
 type AutostartState int
@@ -56,13 +59,57 @@ func autostartCreateArgs(file, username string) []string {
 	return []string{"/Create", "/TN", taskName, "/SC", "ONLOGON", "/RU", username, "/IT", "/RL", "LIMITED", "/TR", tr, "/F"}
 }
 
+func decodeTaskXML(data []byte) ([]byte, bool, error) {
+	const (
+		littleEndian = iota
+		bigEndian
+	)
+	order := -1
+	offset := 0
+	switch {
+	case len(data) >= 2 && data[0] == 0xff && data[1] == 0xfe:
+		order, offset = littleEndian, 2
+	case len(data) >= 2 && data[0] == 0xfe && data[1] == 0xff:
+		order, offset = bigEndian, 2
+	case len(data) >= 2 && data[0] == '<' && data[1] == 0:
+		order = littleEndian
+	case len(data) >= 2 && data[0] == 0 && data[1] == '<':
+		order = bigEndian
+	default:
+		return data, false, nil
+	}
+	payload := data[offset:]
+	if len(payload)%2 != 0 {
+		return nil, false, fmt.Errorf("invalid UTF-16 task definition length")
+	}
+	units := make([]uint16, len(payload)/2)
+	for i := range units {
+		if order == littleEndian {
+			units[i] = binary.LittleEndian.Uint16(payload[i*2:])
+		} else {
+			units[i] = binary.BigEndian.Uint16(payload[i*2:])
+		}
+	}
+	return []byte(string(utf16.Decode(units))), true, nil
+}
+
 func taskEnabledFromXML(data []byte) (bool, error) {
 	var definition struct {
 		Settings struct {
 			Enabled *bool `xml:"Enabled"`
 		} `xml:"Settings"`
 	}
-	if err := xml.Unmarshal(data, &definition); err != nil {
+	decoded, utf16XML, err := decodeTaskXML(data)
+	if err != nil {
+		return false, err
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(decoded))
+	if utf16XML {
+		decoder.CharsetReader = func(_ string, input io.Reader) (io.Reader, error) {
+			return input, nil
+		}
+	}
+	if err := decoder.Decode(&definition); err != nil {
 		return false, err
 	}
 	if definition.Settings.Enabled == nil {
