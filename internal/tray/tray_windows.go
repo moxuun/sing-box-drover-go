@@ -658,7 +658,10 @@ func (t *Tray) handleCommand(command uint32) {
 			t.setFault(false)
 		}
 	case cmdHomepage:
-		openURL(t.controller.Options().HomepageURL)
+		if err := openURL(t.controller.Options().HomepageURL); err != nil {
+			t.setFault(true)
+			t.balloon("Open homepage failed: "+err.Error(), "Error", true)
+		}
 	case cmdQuit:
 		postQuitMessage.Call(0)
 	default:
@@ -796,10 +799,23 @@ func mustUTF16(value string, max int) []uint16 {
 	return v
 }
 
-func openURL(value string) {
-	p, _ := winapi.UTF16PtrFromString("open")
-	u, _ := winapi.UTF16PtrFromString(value)
-	shellExecute.Call(0, uintptr(unsafe.Pointer(p)), uintptr(unsafe.Pointer(u)), 0, 0, 1)
+func openURL(value string) error {
+	p, err := winapi.UTF16PtrFromString("open")
+	if err != nil {
+		return fmt.Errorf("encode shell operation: %w", err)
+	}
+	u, err := winapi.UTF16PtrFromString(value)
+	if err != nil {
+		return fmt.Errorf("encode homepage URL: %w", err)
+	}
+	result, _, callErr := shellExecute.Call(0, uintptr(unsafe.Pointer(p)), uintptr(unsafe.Pointer(u)), 0, 0, 1)
+	if result <= 32 {
+		if callErr == nil || callErr == winapi.ERROR_SUCCESS {
+			return errors.New("ShellExecute failed")
+		}
+		return fmt.Errorf("ShellExecute: %w", callErr)
+	}
+	return nil
 }
 
 func (t *Tray) watchEvents() {

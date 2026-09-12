@@ -193,3 +193,9 @@ func TestBuildMenuRejectsInvalidSelectorGroupText(t *testing.T) {
 		t.Fatalf("failed menu retained %d bitmap handles", len(tray.menuBitmaps))
 	}
 }
+
+func TestOpenURLRejectsUnencodableText(t *testing.T) {
+	if err := openURL("https://example.test/\x00"); err == nil {
+		t.Fatal("openURL accepted a URL containing NUL")
+	}
+}
