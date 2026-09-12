@@ -23,8 +23,8 @@ log-file = sing-box-drover.log
 启动前应完整退出旧 Drover，并停止会占用相同 mixed、TUN 或 Clash API 端口
 的其他 `sing-box.exe`、reF1nd 或兼容内核。先关闭 TUN 启动并查看日志，再依次
 测试系统代理、打开选择器菜单、切换节点，最后测试需要提权的 TUN 和任务计划
-程序。确认无误后，如果需要启动时自动开启、退出时自动清理系统代理，再把
-`system-proxy-auto` 改为 `on`。
+程序。确认无误后，如果需要启动时自动开启系统代理，再把 `system-proxy-auto`
+改为 `on`；手动开启的系统代理在控制器退出时也会恢复开启前的用户设置。
 
 ## 选择器和节点记忆
 
