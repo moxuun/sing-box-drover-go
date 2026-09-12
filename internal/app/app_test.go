@@ -243,6 +243,14 @@ func TestProbeResumeAPIReturnsContextCancellation(t *testing.T) {
 	}
 }
 
+func TestResumeRecoveryTimeoutCoversProbeBudget(t *testing.T) {
+	probeBudget := time.Duration(resumeAPIProbeAttempts)*time.Second +
+		time.Duration(resumeAPIProbeAttempts-1)*resumeAPIProbeInterval
+	if ResumeRecoveryTimeout <= probeBudget {
+		t.Fatalf("resume recovery timeout = %v, want more than probe budget %v", ResumeRecoveryTimeout, probeBudget)
+	}
+}
+
 func TestProbeResumeAPIRejectsResponseAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	client := clash.NewClient("http://example.invalid", "token")

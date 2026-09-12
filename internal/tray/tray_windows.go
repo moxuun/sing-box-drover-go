@@ -353,7 +353,7 @@ func (t *Tray) recoverAfterResume() {
 		return
 	}
 	defer t.finishResumeRecovery()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), app.ResumeRecoveryTimeout)
 	err := t.controller.RecoverAfterResume(ctx)
 	cancel()
 	if err != nil {

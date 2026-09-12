@@ -36,6 +36,9 @@ const (
 	restartInstanceInterval = 50 * time.Millisecond
 	resumeAPIProbeAttempts  = 5
 	resumeAPIProbeInterval  = 750 * time.Millisecond
+	// ResumeRecoveryTimeout covers all bounded API probes and leaves a small
+	// margin for scheduling and response processing.
+	ResumeRecoveryTimeout = 10 * time.Second
 )
 
 func ParseFlags(args []string) Flags {
