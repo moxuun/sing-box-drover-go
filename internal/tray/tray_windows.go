@@ -168,6 +168,8 @@ type Tray struct {
 	statusMu         sync.Mutex
 	fault            bool
 	iconMu           sync.Mutex
+	resumeMu         sync.Mutex
+	resumeRunning    bool
 	done             chan struct{}
 	closeOnce        sync.Once
 }
@@ -345,6 +347,10 @@ func shouldRestoreTrayIcon(message uint32, wParam uintptr, taskbarCreated uint32
 }
 
 func (t *Tray) recoverAfterResume() {
+	if !t.beginResumeRecovery() {
+		return
+	}
+	defer t.finishResumeRecovery()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	err := t.controller.RecoverAfterResume(ctx)
 	cancel()
@@ -352,6 +358,22 @@ func (t *Tray) recoverAfterResume() {
 		t.setFault(true)
 		t.balloon("Resume recovery failed: "+err.Error(), "Error", true)
 	}
+}
+
+func (t *Tray) beginResumeRecovery() bool {
+	t.resumeMu.Lock()
+	defer t.resumeMu.Unlock()
+	if t.resumeRunning {
+		return false
+	}
+	t.resumeRunning = true
+	return true
+}
+
+func (t *Tray) finishResumeRecovery() {
+	t.resumeMu.Lock()
+	t.resumeRunning = false
+	t.resumeMu.Unlock()
 }
 
 func (t *Tray) handleTrayClick() {

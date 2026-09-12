@@ -44,3 +44,18 @@ func TestRunOnTrayThreadKeepsWindowThread(t *testing.T) {
 		t.Fatalf("tray callback thread changed: before=%d after=%d", before, after)
 	}
 }
+
+func TestResumeRecoveryGateSerializesConcurrentEvents(t *testing.T) {
+	tray := &Tray{}
+	if !tray.beginResumeRecovery() {
+		t.Fatal("first resume recovery was rejected")
+	}
+	if tray.beginResumeRecovery() {
+		t.Fatal("concurrent resume recovery was admitted")
+	}
+	tray.finishResumeRecovery()
+	if !tray.beginResumeRecovery() {
+		t.Fatal("resume recovery did not reopen after completion")
+	}
+	tray.finishResumeRecovery()
+}
