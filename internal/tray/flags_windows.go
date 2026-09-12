@@ -157,8 +157,8 @@ func useSharedCheckAndBitmapColumn(menu uintptr) bool {
 	return ok != 0
 }
 
-// appendSelectorItem keeps the original selector value for command routing,
-// while replacing the first country marker in the visible menu text. A native
+// appendSelectorItem replaces the first country marker in the visible menu
+// text; the caller keeps the original selector value for command routing. A native
 // bitmap from the bundled asset atlas keeps flags visible even when the
 // Windows menu font renders regional-indicator emoji as plain letters. Items
 // with a country marker use one composite bitmap: the system check glyph is

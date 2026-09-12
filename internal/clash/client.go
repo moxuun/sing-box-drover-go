@@ -14,9 +14,10 @@ import (
 )
 
 type Selector struct {
-	Name string
-	All  []string
-	Now  string
+	Name        string
+	All         []string
+	Now         string
+	ResolvedNow string
 }
 
 type Client struct {
@@ -81,9 +82,18 @@ func (c *Client) CheckReady(ctx context.Context) error {
 	return err
 }
 
+type proxyState struct {
+	Name string
+	Type string
+	All  []string
+	Now  string
+}
+
 // ParseSelectors preserves both the order of the proxies object and every
 // option in each selector's all array. No recursive provider traversal is
 // attempted: compatible cores already expose provider-backed nodes in all.
+// When a selector points at another runtime group, ResolvedNow records the
+// group's current leaf for display only; it is never used as a switch value.
 func ParseSelectors(data []byte) ([]Selector, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	var token json.Token
@@ -94,7 +104,7 @@ func ParseSelectors(data []byte) ([]Selector, error) {
 	if delim, ok := token.(json.Delim); !ok || delim != '{' {
 		return nil, errors.New("invalid /proxies response: root is not an object")
 	}
-	var selectors []Selector
+	var proxies []proxyState
 	for dec.More() {
 		keyToken, err := dec.Token()
 		if err != nil {
@@ -140,9 +150,7 @@ func ParseSelectors(data []byte) ([]Selector, error) {
 			if err := json.Unmarshal(raw, &p); err != nil {
 				continue
 			}
-			if strings.EqualFold(p.Type, "Selector") {
-				selectors = append(selectors, Selector{Name: name, All: append([]string(nil), p.All...), Now: p.Now})
-			}
+			proxies = append(proxies, proxyState{Name: name, Type: p.Type, All: append([]string(nil), p.All...), Now: p.Now})
 		}
 		if _, err := dec.Token(); err != nil {
 			return nil, err
@@ -157,7 +165,38 @@ func ParseSelectors(data []byte) ([]Selector, error) {
 		}
 		return nil, err
 	}
+	byName := make(map[string]proxyState, len(proxies))
+	for _, proxy := range proxies {
+		byName[proxy.Name] = proxy
+	}
+	selectors := make([]Selector, 0, len(proxies))
+	for _, proxy := range proxies {
+		if !strings.EqualFold(proxy.Type, "Selector") {
+			continue
+		}
+		selector := Selector{Name: proxy.Name, All: proxy.All, Now: proxy.Now}
+		if resolved, ok := resolveProxyNow(proxy.Now, byName, map[string]bool{}); ok && resolved != proxy.Now {
+			selector.ResolvedNow = resolved
+		}
+		selectors = append(selectors, selector)
+	}
 	return selectors, nil
+}
+
+func resolveProxyNow(name string, proxies map[string]proxyState, visiting map[string]bool) (string, bool) {
+	proxy, ok := proxies[name]
+	if !ok {
+		return name, true
+	}
+	if visiting[name] {
+		return "", false
+	}
+	if proxy.Now == "" {
+		return name, true
+	}
+	visiting[name] = true
+	defer delete(visiting, name)
+	return resolveProxyNow(proxy.Now, proxies, visiting)
 }
 
 func (c *Client) FetchSelectors(ctx context.Context) ([]Selector, error) {

@@ -37,6 +37,28 @@ func TestParseSelectorsPreservesAPIOrderAndProviderNodes(t *testing.T) {
 	}
 }
 
+func TestParseSelectorsResolvesRuntimeGroupForDisplay(t *testing.T) {
+	data := []byte(`{"proxies":{"GLOBAL":{"type":"Selector","all":["proxy"],"now":"proxy"},"proxy":{"type":"Selector","all":["🎈 自动选择"],"now":"🎈 自动选择"},"🎈 自动选择":{"type":"URLTest","all":["node-a","node-b"],"now":"node-b"}}}`)
+	got, err := ParseSelectors(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Now != "proxy" || got[1].Now != "🎈 自动选择" || got[0].ResolvedNow != "node-b" || got[1].ResolvedNow != "node-b" {
+		t.Fatalf("runtime group state was not resolved for display: %#v", got)
+	}
+}
+
+func TestParseSelectorsDisplaysDirectRuntimeLeaf(t *testing.T) {
+	data := []byte(`{"proxies":{"proxy":{"type":"Selector","all":["🎈 自动选择"],"now":"🎈 自动选择"},"🎈 自动选择":{"type":"URLTest","all":["direct","node"],"now":"direct"},"direct":{"type":"Direct"}}}`)
+	got, err := ParseSelectors(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ResolvedNow != "direct" {
+		t.Fatalf("direct runtime leaf was not resolved for display: %#v", got)
+	}
+}
+
 func TestSwitchSelectorUsesBearerPutAndFlush(t *testing.T) {
 	var methods []string
 	var paths []string

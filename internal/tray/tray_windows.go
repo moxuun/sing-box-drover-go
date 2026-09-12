@@ -495,7 +495,7 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 					if value == selector.Now {
 						flags |= mfChecked
 					}
-					t.appendSelectorItem(submenu, flags, id, value, bitmapCache)
+					t.appendSelectorItem(submenu, flags, id, selectorOptionText(selector, value), bitmapCache)
 					t.selectors[id] = selectorAction{selector: selector.Name, value: value}
 					id++
 				}
@@ -509,7 +509,7 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 					if value == selector.Now {
 						flags |= mfChecked
 					}
-					t.appendSelectorItem(menu, flags, id, value, bitmapCache)
+					t.appendSelectorItem(menu, flags, id, selectorOptionText(selector, value), bitmapCache)
 					t.selectors[id] = selectorAction{selector: selector.Name, value: value}
 					id++
 				}
@@ -531,6 +531,13 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 	appendMenu.Call(menu, mfSeparator, 0, 0)
 	appendText(mfString, cmdQuit, "Quit")
 	return menu, nil
+}
+
+func selectorOptionText(selector clash.Selector, value string) string {
+	if value == selector.Now && selector.ResolvedNow != "" && selector.ResolvedNow != value {
+		return value + "（当前：" + selector.ResolvedNow + "）"
+	}
+	return value
 }
 
 func (t *Tray) handleCommand(command uint32) {

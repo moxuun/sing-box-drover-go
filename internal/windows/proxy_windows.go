@@ -18,6 +18,7 @@ const (
 	internetOptionSettingsChanged = 39
 	internetOptionPerConnection   = 75
 	internetOptionRefresh         = 37
+	internetOptionProxyChanged    = 95
 )
 
 type perConnOption struct {
@@ -68,6 +69,7 @@ func setProxy(proxy string) error {
 		return fmt.Errorf("InternetSetOption failed")
 	}
 	_, _, _ = internetSetOption.Call(0, internetOptionSettingsChanged, 0, 0)
+	_, _, _ = internetSetOption.Call(0, internetOptionProxyChanged, 0, 0)
 	_, _, _ = internetSetOption.Call(0, internetOptionRefresh, 0, 0)
 	return nil
 }
@@ -77,7 +79,7 @@ func EnableSystemProxy(host string, port int) error {
 		return fmt.Errorf("invalid system proxy address")
 	}
 	address := fmt.Sprintf("%s:%d", host, port)
-	return setProxy(fmt.Sprintf("http=%s;https=%s;socks=%s", address, address, address))
+	return setProxy("http://" + address)
 }
 
 func DisableSystemProxy() error { return setProxy("") }

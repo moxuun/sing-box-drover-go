@@ -7,6 +7,7 @@ import (
 	"unsafe"
 
 	winapi "golang.org/x/sys/windows"
+	"sing-box-drover/internal/clash"
 )
 
 func TestFlagAtlasContainsGeneratedAssets(t *testing.T) {
@@ -143,5 +144,15 @@ func TestSelectorDisplayInfoRemovesExistingFlag(t *testing.T) {
 	text, code := selectorDisplayInfo("mysub/🇺🇸 serv xtls-reality")
 	if text != "mysub/ serv xtls-reality" || code != "US" {
 		t.Fatalf("selectorDisplayInfo returned (%q, %q)", text, code)
+	}
+}
+
+func TestSelectorOptionTextDisplaysResolvedRuntimeGroup(t *testing.T) {
+	selector := clash.Selector{Name: "proxy", Now: "🎈 自动选择", ResolvedNow: "node-b"}
+	if got := selectorOptionText(selector, selector.Now); got != "🎈 自动选择（当前：node-b）" {
+		t.Fatalf("selectorOptionText() = %q", got)
+	}
+	if got := selectorOptionText(selector, "node-a"); got != "node-a" {
+		t.Fatalf("selectorOptionText() changed an unselected option: %q", got)
 	}
 }
