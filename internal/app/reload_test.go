@@ -175,6 +175,7 @@ func TestReplacementActionsDoNotLaunchWhenSingBoxCheckFails(t *testing.T) {
 	}{
 		{name: "restart", run: func(a *App) error { return a.Restart() }},
 		{name: "elevated TUN handoff", run: func(a *App) error { return a.LaunchElevated(true) }},
+		{name: "autostart handoff", run: func(a *App) error { return a.LaunchAutostartElevated(true) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			launched := false
@@ -196,5 +197,32 @@ func TestReplacementActionsDoNotLaunchWhenSingBoxCheckFails(t *testing.T) {
 				t.Fatal("replacement process launched after configuration check failed")
 			}
 		})
+	}
+}
+
+func TestAutostartHandoffPreservesActiveTun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	writeReloadSource(t, path, reloadConfigJSON)
+	launchedFlags := ""
+	a := &App{
+		source:    config.ConfigSource{FilePath: path},
+		tunActive: true,
+		configChecker: func(string) error {
+			return nil
+		},
+		selfLauncher: func(flags string, elevated bool) error {
+			if !elevated {
+				t.Fatal("autostart replacement did not request elevation")
+			}
+			launchedFlags = flags
+			return nil
+		},
+	}
+
+	if err := a.LaunchAutostartElevated(true); err != nil {
+		t.Fatalf("LaunchAutostartElevated() error = %v", err)
+	}
+	if launchedFlags != "-restart -tun -autostart-enable" {
+		t.Fatalf("autostart replacement flags = %q", launchedFlags)
 	}
 }

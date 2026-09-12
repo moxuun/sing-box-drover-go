@@ -652,7 +652,14 @@ func (a *App) LaunchElevated(tun bool) error {
 
 func (a *App) QueryAutostart() (platform.AutostartState, error) { return platform.QueryAutostart() }
 func (a *App) LaunchAutostartElevated(enabled bool) error {
+	tun := a.TunActive()
+	if _, err := a.checkConfigCandidate(tun, false); err != nil {
+		return err
+	}
 	flags := "-restart"
+	if tun {
+		flags += " -tun"
+	}
 	if enabled {
 		flags += " -autostart-enable"
 	} else {
