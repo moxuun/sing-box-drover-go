@@ -11,6 +11,7 @@ import (
 	"sing-box-drover/internal/clash"
 	"sing-box-drover/internal/config"
 	"sing-box-drover/internal/core"
+	platform "sing-box-drover/internal/windows"
 )
 
 const reloadConfigJSON = `{
@@ -224,5 +225,58 @@ func TestAutostartHandoffPreservesActiveTun(t *testing.T) {
 	}
 	if launchedFlags != "-restart -tun -autostart-enable" {
 		t.Fatalf("autostart replacement flags = %q", launchedFlags)
+	}
+}
+
+func TestRestartWithConfigReconfiguresChangedProxyAddress(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	writeReloadSource(t, path, strings.Replace(reloadConfigJSON, `"listen_port": 1080`, `"listen_port": 1081`, 1))
+	restored := 0
+	enabledHost := ""
+	enabledPort := 0
+	startedConfig := ""
+	var steps []string
+	a := &App{
+		source:      config.ConfigSource{FilePath: path},
+		config:      config.SingBoxConfig{ProxyHost: "127.0.0.1", ProxyPort: 1080},
+		proxyActive: true,
+		proxyOwned:  true,
+		systemProxyRestorer: func(platform.ProxySession) (bool, error) {
+			steps = append(steps, "restore")
+			restored++
+			return true, nil
+		},
+		systemProxyEnabler: func(host string, port int) (platform.ProxySession, error) {
+			steps = append(steps, "enable")
+			enabledHost, enabledPort = host, port
+			return platform.ProxySession{}, nil
+		},
+		configChecker: func(string) error { return nil },
+		supervisor:    core.NewSupervisor("", nil),
+		coreStarter: func(runtimeJSON string) error {
+			steps = append(steps, "start")
+			startedConfig = runtimeJSON
+			return nil
+		},
+	}
+	defer a.Close()
+
+	if err := a.restartWithConfig(false, false); err != nil {
+		t.Fatal(err)
+	}
+	if restored != 1 {
+		t.Fatalf("proxy restore calls = %d, want 1 before restart", restored)
+	}
+	if got, want := strings.Join(steps, ","), "restore,start,enable"; got != want {
+		t.Fatalf("proxy/core reconfiguration order = %q, want %q", got, want)
+	}
+	if enabledHost != "127.0.0.1" || enabledPort != 1081 {
+		t.Fatalf("proxy was not re-enabled for the new address: %s:%d", enabledHost, enabledPort)
+	}
+	if !a.SystemProxyActive() {
+		t.Fatal("system proxy was not active after successful reconfiguration")
+	}
+	if !strings.Contains(startedConfig, `"listen_port":1081`) {
+		t.Fatalf("started configuration did not use the new proxy address: %s", startedConfig)
 	}
 }

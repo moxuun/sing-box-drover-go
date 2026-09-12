@@ -118,13 +118,36 @@ func (a *App) restartWithConfig(tun, requireTun bool) error {
 	if a.supervisor == nil {
 		return errors.New("core supervisor is not configured")
 	}
+	proxyReenable := false
+	a.proxyMu.Lock()
+	a.mu.RLock()
+	proxyAddressChanged := a.proxyActive && a.proxyOwned &&
+		(a.config.ProxyHost != candidate.config.ProxyHost || a.config.ProxyPort != candidate.config.ProxyPort)
+	a.mu.RUnlock()
+	if proxyAddressChanged {
+		proxyReenable, err = a.restoreSystemProxyLocked()
+		if err != nil {
+			a.proxyMu.Unlock()
+			return errors.Join(errors.New("prepare system proxy for configuration change"), err)
+		}
+	}
+	a.proxyMu.Unlock()
 	previous := a.applyConfigCandidate(candidate)
-	if err := a.supervisor.Start(runtimeConfigFor(candidate.config, candidate.tun)); err != nil {
+	start := a.coreStarter
+	if start == nil {
+		start = a.supervisor.Start
+	}
+	if err := start(runtimeConfigFor(candidate.config, candidate.tun)); err != nil {
 		a.restoreConfigSnapshot(previous)
 		return err
 	}
 	a.mu.Lock()
 	a.tunActive = candidate.tun
 	a.mu.Unlock()
+	if proxyReenable {
+		if err := a.EnableSystemProxy(); err != nil {
+			return errors.Join(errors.New("enable system proxy for new configuration"), err)
+		}
+	}
 	return nil
 }

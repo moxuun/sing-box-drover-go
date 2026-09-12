@@ -150,6 +150,7 @@ type App struct {
 	systemProxyRestorer func(platform.ProxySession) (bool, error)
 	selfLauncher        func(string, bool) error
 	configChecker       func(string) error
+	coreStarter         func(string) error
 }
 
 func New(args []string) (*App, error) {
@@ -224,6 +225,7 @@ func NewAt(executable string, args []string) (*App, error) {
 	}
 	app.supervisor = core.NewSupervisor(corePath, logger)
 	app.configChecker = app.supervisor.Check
+	app.coreStarter = app.supervisor.Start
 	app.supervisor.SetHandler(func(event core.Event) {
 		app.handleCoreEvent(event)
 	})
