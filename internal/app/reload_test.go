@@ -280,3 +280,42 @@ func TestRestartWithConfigReconfiguresChangedProxyAddress(t *testing.T) {
 		t.Fatalf("started configuration did not use the new proxy address: %s", startedConfig)
 	}
 }
+
+func TestRestartWithConfigTemporarilyRestoresSameProxyAddress(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	writeReloadSource(t, path, reloadConfigJSON)
+	var steps []string
+	enabledPort := 0
+	a := &App{
+		source:      config.ConfigSource{FilePath: path},
+		config:      config.SingBoxConfig{ProxyHost: "127.0.0.1", ProxyPort: 1080},
+		proxyActive: true,
+		proxyOwned:  true,
+		systemProxyRestorer: func(platform.ProxySession) (bool, error) {
+			steps = append(steps, "restore")
+			return true, nil
+		},
+		systemProxyEnabler: func(_ string, port int) (platform.ProxySession, error) {
+			steps = append(steps, "enable")
+			enabledPort = port
+			return platform.ProxySession{}, nil
+		},
+		configChecker: func(string) error { return nil },
+		supervisor:    core.NewSupervisor("", nil),
+		coreStarter: func(string) error {
+			steps = append(steps, "start")
+			return nil
+		},
+	}
+	defer a.Close()
+
+	if err := a.restartWithConfig(false, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(steps, ","), "restore,start,enable"; got != want {
+		t.Fatalf("proxy/core restart order = %q, want %q", got, want)
+	}
+	if enabledPort != 1080 || !a.SystemProxyActive() {
+		t.Fatalf("proxy was not restored for the unchanged address: port=%d active=%v", enabledPort, a.SystemProxyActive())
+	}
+}

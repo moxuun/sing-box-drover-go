@@ -121,10 +121,9 @@ func (a *App) restartWithConfig(tun, requireTun bool) error {
 	proxyReenable := false
 	a.proxyMu.Lock()
 	a.mu.RLock()
-	proxyAddressChanged := a.proxyActive && a.proxyOwned &&
-		(a.config.ProxyHost != candidate.config.ProxyHost || a.config.ProxyPort != candidate.config.ProxyPort)
+	proxyActive := a.proxyActive && a.proxyOwned
 	a.mu.RUnlock()
-	if proxyAddressChanged {
+	if proxyActive {
 		proxyReenable, err = a.restoreSystemProxyLocked()
 		if err != nil {
 			a.proxyMu.Unlock()
