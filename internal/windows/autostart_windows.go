@@ -4,6 +4,7 @@ package windows
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"os/user"
 	"strings"
 	"syscall"
+	"time"
 )
 
 type AutostartState int
@@ -23,6 +25,8 @@ const (
 
 const taskName = "sing-box-drover"
 
+const taskSchedulerTimeout = 10 * time.Second
+
 func taskMissing(output []byte) bool {
 	message := strings.ToLower(string(output))
 	for _, phrase := range []string{"does not exist", "cannot find", "not found", "system cannot find the path", "不存在", "找不到"} {
@@ -34,9 +38,15 @@ func taskMissing(output []byte) bool {
 }
 
 func runTaskScheduler(args ...string) ([]byte, error) {
-	cmd := exec.Command("schtasks.exe", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), taskSchedulerTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "schtasks.exe", args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
-	return cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return out, ctx.Err()
+	}
+	return out, err
 }
 
 func autostartCreateArgs(file, username string) []string {

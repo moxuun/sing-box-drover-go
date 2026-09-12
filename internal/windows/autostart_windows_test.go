@@ -2,7 +2,23 @@
 
 package windows
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+func TestRunTaskSchedulerQueryIsBounded(t *testing.T) {
+	done := make(chan struct{})
+	go func() {
+		_, _ = runTaskScheduler("/Query", "/TN", taskName, "/XML")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(taskSchedulerTimeout + time.Second):
+		t.Fatal("Task Scheduler query exceeded its timeout")
+	}
+}
 
 func TestAutostartCreateArgsUseLimitedRunLevel(t *testing.T) {
 	args := autostartCreateArgs(`C:\Users\Example User\sing-box-dover-go.exe`, `DOMAIN\user`)
