@@ -371,6 +371,28 @@ func TestCoreFailureDoesNotDisableInactiveProxy(t *testing.T) {
 	}
 }
 
+func TestCleanCoreStopDisablesActiveProxy(t *testing.T) {
+	called := false
+	a := &App{
+		proxyActive: true,
+		proxyOwned:  true,
+		systemProxyRestorer: func(platform.ProxySession) (bool, error) {
+			called = true
+			return true, nil
+		},
+		events: make(chan Event, 1),
+	}
+
+	a.handleCoreEvent(core.Event{Kind: core.EventState, State: core.StateStopped, Message: "core stopped"})
+
+	if !called {
+		t.Fatal("clean core stop did not disable the active system proxy")
+	}
+	if a.SystemProxyActive() {
+		t.Fatal("system proxy state remained active after clean core stop")
+	}
+}
+
 func TestCoreFailureKeepsProxyStateWhenCleanupFails(t *testing.T) {
 	want := errors.New("settings update failed")
 	a := &App{

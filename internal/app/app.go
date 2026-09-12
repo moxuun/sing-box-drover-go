@@ -290,9 +290,9 @@ func (a *App) runtimeConfig(tun bool) string {
 }
 
 func (a *App) handleCoreEvent(event core.Event) {
-	if event.State == core.StateFailed {
+	if event.State == core.StateFailed || event.State == core.StateStopped {
 		if err := a.disableSystemProxyIfActive(); err != nil {
-			a.logger.Log("SystemProxy", "failed to disable after core failure: "+err.Error())
+			a.logger.Log("SystemProxy", "failed to disable after core stop: "+err.Error())
 		}
 	}
 	a.emit(Event{Kind: event.Kind, State: event.State, Message: event.Message})
