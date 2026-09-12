@@ -26,6 +26,18 @@ func TestReadSingBoxConfigRejectsUnterminatedBlockComment(t *testing.T) {
 	}
 }
 
+func TestReadSingBoxConfigRejectsMalformedCommas(t *testing.T) {
+	base := `{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":1080}]}`
+	for _, suffix := range []string{`,,}`, `},`} {
+		t.Run(suffix, func(t *testing.T) {
+			input := strings.TrimSuffix(base, `}`) + suffix
+			if _, err := ReadSingBoxConfig(input); err == nil {
+				t.Fatalf("malformed comma input was accepted: %s", input)
+			}
+		})
+	}
+}
+
 func TestReadSingBoxConfigAddsRuntimeAPIAndFiltersTun(t *testing.T) {
 	input := `{
 	  // source comments remain outside generated runtime text

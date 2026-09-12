@@ -63,6 +63,9 @@ func normalizeJSON(source string) (string, error) {
 			}
 		}
 		if ch == ',' {
+			if pendingComma {
+				return b.String(), errors.New("unexpected consecutive comma")
+			}
 			pendingComma = true
 			continue
 		}
@@ -82,6 +85,9 @@ func normalizeJSON(source string) (string, error) {
 		b.WriteByte(ch)
 	}
 
+	if pendingComma {
+		return b.String(), errors.New("trailing comma outside a JSON container")
+	}
 	if inBlockComment {
 		return b.String(), errors.New("unterminated block comment")
 	}
