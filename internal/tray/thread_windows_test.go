@@ -3,11 +3,29 @@
 package tray
 
 import (
+	"errors"
 	"runtime"
 	"testing"
 
 	winapi "golang.org/x/sys/windows"
 )
+
+func TestWin32CallErrorNormalizesMissingLastError(t *testing.T) {
+	for _, callErr := range []error{nil, winapi.ERROR_SUCCESS} {
+		err := win32CallError("CreatePopupMenu", callErr)
+		if err == nil || err.Error() != "CreatePopupMenu failed" {
+			t.Fatalf("win32CallError(%v) = %v, want a stable failure", callErr, err)
+		}
+	}
+}
+
+func TestWin32CallErrorPreservesLastError(t *testing.T) {
+	want := winapi.ERROR_ACCESS_DENIED
+	err := win32CallError("GetModuleHandle", want)
+	if !errors.Is(err, want) {
+		t.Fatalf("win32CallError() = %v, want wrapped %v", err, want)
+	}
+}
 
 func TestShouldRestoreTrayIconAfterTaskbarRecreationOrResume(t *testing.T) {
 	const taskbarCreated = 0xc123

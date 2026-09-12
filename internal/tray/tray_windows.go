@@ -192,6 +192,13 @@ func runOnTrayThread(run func() error) error {
 	return run()
 }
 
+func win32CallError(operation string, callErr error) error {
+	if callErr == nil || callErr == winapi.ERROR_SUCCESS {
+		return errors.New(operation + " failed")
+	}
+	return fmt.Errorf("%s: %w", operation, callErr)
+}
+
 func run(controller *app.App) (runErr error) {
 	tray, err := newTray(controller)
 	if err != nil {
@@ -240,7 +247,7 @@ func newTray(controller *app.App) (*Tray, error) {
 	}
 	instance, _, instanceErr := getModuleHandle.Call(0)
 	if instance == 0 {
-		return nil, instanceErr
+		return nil, win32CallError("GetModuleHandle", instanceErr)
 	}
 	t := &Tray{
 		controller:     controller,
@@ -254,7 +261,7 @@ func newTray(controller *app.App) (*Tray, error) {
 	class.ClassName = className
 	atom, _, registerErr := registerClassEx.Call(uintptr(unsafe.Pointer(&class)))
 	if atom == 0 && registerErr != winapi.ERROR_CLASS_ALREADY_EXISTS {
-		return nil, fmt.Errorf("RegisterClassEx: %w", registerErr)
+		return nil, win32CallError("RegisterClassEx", registerErr)
 	}
 	t.classOwned = atom != 0
 	hWnd, _, createErr := createWindowEx.Call(wsExToolWindow|wsExNoActivate, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(className)), 0, 0, 0, 0, 0, 0, 0, instance, 0)
@@ -263,7 +270,7 @@ func newTray(controller *app.App) (*Tray, error) {
 			_, _, _ = unregisterClass.Call(uintptr(unsafe.Pointer(t.className)), instance)
 			t.classOwned = false
 		}
-		return nil, fmt.Errorf("CreateWindowEx: %w", createErr)
+		return nil, win32CallError("CreateWindowEx", createErr)
 	}
 	t.hWnd = hWnd
 	traysMu.Lock()
@@ -471,7 +478,7 @@ func (t *Tray) showMenuAt(anchor *point) {
 func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 	menu, _, err := createPopupMenu.Call()
 	if menu == 0 {
-		return 0, fmt.Errorf("CreatePopupMenu: %w", err)
+		return 0, win32CallError("CreatePopupMenu", err)
 	}
 	buildComplete := false
 	defer func() {
@@ -772,7 +779,7 @@ func (t *Tray) installIcon(replace bool) error {
 func (t *Tray) notifyLocked(operation uint32) error {
 	data := t.dataLocked(nifMessage | nifIcon | nifTip | nifShowTip)
 	if ok, _, err := shellNotifyIcon.Call(uintptr(operation), uintptr(unsafe.Pointer(&data))); ok == 0 {
-		return fmt.Errorf("Shell_NotifyIcon: %w", err)
+		return win32CallError("Shell_NotifyIcon", err)
 	}
 	return nil
 }
