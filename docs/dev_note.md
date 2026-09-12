@@ -60,19 +60,20 @@
 
 - `已完成` 托盘图标已嵌入正式 Windows 构建，状态区分未运行、代理/TUN 工作中和故障，并在 tooltip 中显示当前模式。
 - `待实机验证` 图标颜色、tooltip 和取消系统代理/TUN 后的状态需要在真实托盘中确认，自动化测试不能替代视觉检查。
-- `已完成` 正式构建统一使用 `scripts/build.ps1`、Go 1.25.6、应用图标和 Windows manifest，输出固定为 `output/sing-box-dover-go.exe`；根目录裸 `go build` 不作为交付物。
+- `已完成` 正式构建统一使用 `scripts/build.ps1`、Go 1.25.14、应用图标和 Windows manifest，输出固定为 `output/sing-box-dover-go.exe`；根目录裸 `go build` 不作为交付物。
 - `已完成` GitHub Actions 在推送 `v*` 标签时执行格式检查、测试、`go vet` 和 Windows amd64 构建，并打包托盘程序、兼容命名的 `sing-box-drover.ini` 和 SHA256 校验文件，不捆绑 `sing-box.exe`。
 - `已完成` Windows Runner 行尾问题修复后，`v0.1.1` 至 `v0.1.5` 的远程发布工作流均已成功，标签构建与 GitHub Release 链路已经得到实际验证。
 - `待实机验证` 当前 `main` 比 `v0.1.5` 多出系统代理和自动选择落点显示修改；在 Discord、Selector 菜单和代理清理验证完成前，不应直接把它作为新版本发布。
 - `已完成` 新增独立的 Windows 持续集成工作流，在普通 push 和 Pull Request 上执行格式检查、全量测试和 `go vet`；发布工作流继续只负责版本标签产物。
 - `已完成` `scripts/build.ps1` 会保存并恢复调用者原有的 `GOTOOLCHAIN`、`GOOS`、`GOARCH` 和 `CGO_ENABLED` 环境变量，同时继续清理临时资源文件。
 - `待实机验证` 正式构建仍需在运行中的旧 EXE 场景核对目标替换结果、构建信息和是否遗留 `.exe~`；脚本不会强制结束用户正在运行的程序。
-- `设计待决定` Go 1.25.6 已落后于同系列的安全修复版本，并在 Go 1.27 发布后退出官方支持窗口，`golang.org/x/sys` 也仍固定在 v0.36.0；不能只因旧内存结论长期冻结工具链。应先在同一配置、同一生命周期下比较 Go 1.25 最新补丁版与受支持版本的 Working Set、Private Memory 和功能，再决定工具链与依赖升级基线。
+- `已完成` 工具链从 Go 1.25.6 更新到同系列最新补丁 Go 1.25.14；该版本纳入截至 2026-08-19 的同系列安全和稳定性修复，并继续使用 Go 1.25 主版本构建基线。
+- `待实机验证` Go 1.25.14 与旧 1.25.6 的 Working Set、Private Memory 和完整托盘生命周期尚未做同一条件对比；在对比完成前，README 的 4–8 MiB 说明继续标注为旧版本实测，Go 1.26/1.27 也不直接升级。
 - `待实机验证` 2026-09-12 对当前运行的 Go 1.25.6 产物连续采样约为 30.2 MiB Working Set、19.3 MiB Private Memory、406 handles，与 README 的 4–8 MiB 截图不一致；该产物构建信息仍指向 `v0.1.5+dirty`，需要用当前提交的正式构建冷启动后按相同口径复测，不能据此认定代码回归或继续沿用旧宣传值。
 - `设计待决定` 项目名称目前在仓库/模块/INI 的 `drover` 与二进制/发布包的 `dover` 之间混用；兼容名称和对外品牌仍需单独决定，暂不在本项中改名。
 - `已完成` README 的 Release 徽章已链接到本仓库的 Releases 页面，不再使用无效的字面量 `...` 目标。
 - `已完成` 用户文档与开发文档分离，示例 INI 提供中文注释；`AGENTS.md` 只作为本地协作文件，不应上传到仓库。
-- `已完成` 2026-09-12 维护审计已完成；固定 Go 1.25.6 下 `gofmt -l cmd internal tools`、`go test -count=1 ./...` 和 `go vet ./...` 均通过，本次未修改功能代码，也未把自动检查当作 Windows 实机结论。
+- `已完成` 2026-09-12 维护审计已完成；固定 Go 1.25.6 下 `gofmt -l cmd internal tools`、`go test -count=1 ./...` 和 `go vet ./...` 均通过，本条保留为历史审计记录，不代表当前工具链版本。
 
 ## 当前维护边界
 
@@ -99,7 +100,7 @@
 托盘控制器是原生 Windows 程序，不内置 sing-box 内核：
 
 ```powershell
-$env:GOTOOLCHAIN = "go1.25.6"
+$env:GOTOOLCHAIN = "go1.25.14"
 go test ./...
 go vet ./...
 .\scripts\build.ps1
@@ -110,9 +111,9 @@ go vet ./...
 再链接进 Windows GUI 程序；构建结束后会删除这个中间文件。GitHub Actions
 调用同一脚本，因此发布产物也会带有应用图标和 `asInvoker` 清单。
 
-`go.mod` 暂时将 Go 1.25.6 固定为低内存构建基线。`toolchain` 指令不会让
+`go.mod` 暂时将 Go 1.25.14 固定为低内存构建基线。`toolchain` 指令不会让
 已经运行的 Go 1.27 自动降级，因此需要在 PowerShell 中设置
-`$env:GOTOOLCHAIN = "go1.25.6"`。
+`$env:GOTOOLCHAIN = "go1.25.14"`。
 
 ## Go 版本和内存
 

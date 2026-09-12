@@ -23,7 +23,7 @@ try {
     Push-Location -LiteralPath $Root
     $LocationPushed = $true
     New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
-    $env:GOTOOLCHAIN = "go1.25.6"
+    $env:GOTOOLCHAIN = "go1.25.14"
     $env:GOOS = "windows"
     $env:GOARCH = "amd64"
     $env:CGO_ENABLED = "0"
