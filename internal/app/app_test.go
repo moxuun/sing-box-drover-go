@@ -15,6 +15,13 @@ import (
 	platform "sing-box-drover/internal/windows"
 )
 
+func TestParseFlagsIncludesProxyHandoff(t *testing.T) {
+	flags := ParseFlags([]string{"-restart", "-tun", "-proxy"})
+	if !flags.Restart || !flags.Tun || !flags.Proxy {
+		t.Fatalf("handoff flags were not preserved: %+v", flags)
+	}
+}
+
 func TestRetryInstanceAcquisitionWaitsForRelease(t *testing.T) {
 	now := time.Time{}
 	attempts := 0
@@ -166,10 +173,11 @@ func TestCoreFailureDisablesActiveProxyWithoutChangingTunState(t *testing.T) {
 	called := false
 	a := &App{
 		proxyActive: true,
+		proxyOwned:  true,
 		tunActive:   true,
-		systemProxyDisabler: func() error {
+		systemProxyRestorer: func(platform.ProxySession) (bool, error) {
 			called = true
-			return nil
+			return true, nil
 		},
 		events: make(chan Event, 1),
 	}
@@ -190,9 +198,9 @@ func TestCoreFailureDisablesActiveProxyWithoutChangingTunState(t *testing.T) {
 func TestCoreFailureDoesNotDisableInactiveProxy(t *testing.T) {
 	called := false
 	a := &App{
-		systemProxyDisabler: func() error {
+		systemProxyRestorer: func(platform.ProxySession) (bool, error) {
 			called = true
-			return nil
+			return true, nil
 		},
 		events: make(chan Event, 1),
 	}
@@ -211,8 +219,9 @@ func TestCoreFailureKeepsProxyStateWhenCleanupFails(t *testing.T) {
 	want := errors.New("settings update failed")
 	a := &App{
 		proxyActive: true,
-		systemProxyDisabler: func() error {
-			return want
+		proxyOwned:  true,
+		systemProxyRestorer: func(platform.ProxySession) (bool, error) {
+			return false, want
 		},
 		events: make(chan Event, 1),
 	}
@@ -221,5 +230,100 @@ func TestCoreFailureKeepsProxyStateWhenCleanupFails(t *testing.T) {
 
 	if !a.SystemProxyActive() {
 		t.Fatal("proxy state was cleared even though system cleanup failed")
+	}
+}
+
+func TestCloseRestoresManuallyEnabledSystemProxy(t *testing.T) {
+	restores := 0
+	a := &App{
+		proxyActive: true,
+		proxyOwned:  true,
+		systemProxyRestorer: func(platform.ProxySession) (bool, error) {
+			restores++
+			return true, nil
+		},
+	}
+
+	if err := a.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if restores != 1 {
+		t.Fatalf("restore calls = %d, want 1", restores)
+	}
+	if a.SystemProxyActive() {
+		t.Fatal("system proxy remained active after close")
+	}
+}
+
+func TestRestoreRelinquishesOwnershipAfterExternalChange(t *testing.T) {
+	a := &App{
+		proxyActive: true,
+		proxyOwned:  true,
+		systemProxyRestorer: func(platform.ProxySession) (bool, error) {
+			return false, nil
+		},
+	}
+
+	if err := a.DisableSystemProxy(); err != nil {
+		t.Fatalf("DisableSystemProxy() error = %v", err)
+	}
+	if a.SystemProxyActive() {
+		t.Fatal("controller kept claiming externally changed proxy settings")
+	}
+}
+
+func TestReplacementHandoffPreservesActiveSystemProxy(t *testing.T) {
+	restored := 0
+	launchedFlags := ""
+	a := &App{
+		proxyActive: true,
+		proxyOwned:  true,
+		systemProxyRestorer: func(platform.ProxySession) (bool, error) {
+			restored++
+			return true, nil
+		},
+		selfLauncher: func(flags string, elevated bool) error {
+			launchedFlags = flags
+			if !elevated {
+				t.Fatal("replacement did not preserve elevation request")
+			}
+			return nil
+		},
+	}
+
+	if err := a.launchReplacement("-restart -tun", true); err != nil {
+		t.Fatalf("launchReplacement() error = %v", err)
+	}
+	if restored != 1 {
+		t.Fatalf("restore calls = %d, want 1", restored)
+	}
+	if launchedFlags != "-restart -tun -proxy" {
+		t.Fatalf("replacement flags = %q", launchedFlags)
+	}
+}
+
+func TestReplacementLaunchFailureReenablesSystemProxy(t *testing.T) {
+	launchErr := errors.New("launch failed")
+	enabled := 0
+	a := &App{
+		config:      config.SingBoxConfig{ProxyHost: "127.0.0.1", ProxyPort: 10808},
+		proxyActive: true,
+		proxyOwned:  true,
+		systemProxyRestorer: func(platform.ProxySession) (bool, error) {
+			return true, nil
+		},
+		systemProxyEnabler: func(host string, port int) (platform.ProxySession, error) {
+			enabled++
+			return platform.ProxySession{}, nil
+		},
+		selfLauncher: func(string, bool) error { return launchErr },
+	}
+
+	err := a.launchReplacement("-restart", false)
+	if !errors.Is(err, launchErr) {
+		t.Fatalf("launchReplacement() error = %v, want %v", err, launchErr)
+	}
+	if enabled != 1 || !a.SystemProxyActive() {
+		t.Fatalf("proxy was not recovered after launch failure: enabled=%d active=%v", enabled, a.SystemProxyActive())
 	}
 }

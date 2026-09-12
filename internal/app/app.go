@@ -24,6 +24,7 @@ var (
 
 type Flags struct {
 	Tun              bool
+	Proxy            bool
 	Restart          bool
 	AutostartEnable  bool
 	AutostartDisable bool
@@ -41,6 +42,8 @@ func ParseFlags(args []string) Flags {
 		switch arg {
 		case "tun":
 			flags.Tun = true
+		case "proxy":
+			flags.Proxy = true
 		case "restart":
 			flags.Restart = true
 		case "autostart-enable":
@@ -117,6 +120,7 @@ type Event struct {
 type App struct {
 	mu            sync.RWMutex
 	selectorMu    sync.Mutex
+	proxyMu       sync.Mutex
 	executable    string
 	processDir    string
 	options       config.Options
@@ -131,13 +135,17 @@ type App struct {
 	flags         Flags
 	tunActive     bool
 	proxyActive   bool
+	proxySession  platform.ProxySession
+	proxyOwned    bool
 	closed        bool
 	apiPollCancel context.CancelFunc
 	events        chan Event
 
-	// systemProxyDisabler is kept injectable so core-failure cleanup can be
-	// tested without calling the Windows Internet settings API.
-	systemProxyDisabler func() error
+	// System proxy operations stay injectable so ownership and failure cleanup
+	// can be tested without modifying the machine running the tests.
+	systemProxyEnabler  func(string, int) (platform.ProxySession, error)
+	systemProxyRestorer func(platform.ProxySession) (bool, error)
+	selfLauncher        func(string, bool) error
 }
 
 func New(args []string) (*App, error) {
@@ -459,43 +467,72 @@ func (a *App) SwitchSelector(ctx context.Context, selectorName, value string) er
 }
 
 func (a *App) EnableSystemProxy() error {
+	a.proxyMu.Lock()
+	defer a.proxyMu.Unlock()
 	a.mu.RLock()
+	closed, active := a.closed, a.proxyActive
 	host, port := a.config.ProxyHost, a.config.ProxyPort
 	a.mu.RUnlock()
-	if err := platform.EnableSystemProxy(host, port); err != nil {
+	if closed {
+		return errors.New("controller is closed")
+	}
+	if active {
+		return nil
+	}
+	enable := a.systemProxyEnabler
+	if enable == nil {
+		enable = platform.EnableSystemProxy
+	}
+	session, err := enable(host, port)
+	if err != nil {
 		return err
 	}
 	a.mu.Lock()
 	a.proxyActive = true
+	a.proxySession = session
+	a.proxyOwned = true
 	a.mu.Unlock()
 	return nil
 }
 
 func (a *App) DisableSystemProxy() error {
-	if err := platform.DisableSystemProxy(); err != nil {
-		return err
-	}
-	a.mu.Lock()
-	a.proxyActive = false
-	a.mu.Unlock()
-	return nil
+	a.proxyMu.Lock()
+	defer a.proxyMu.Unlock()
+	_, err := a.restoreSystemProxyLocked()
+	return err
 }
 
 func (a *App) disableSystemProxyIfActive() error {
+	a.proxyMu.Lock()
+	defer a.proxyMu.Unlock()
+	_, err := a.restoreSystemProxyLocked()
+	return err
+}
+
+// restoreSystemProxyLocked requires proxyMu. A false result means the system
+// proxy changed externally, so the controller relinquished ownership without
+// overwriting the newer setting.
+func (a *App) restoreSystemProxyLocked() (bool, error) {
+	a.mu.RLock()
+	active, owned, session := a.proxyActive, a.proxyOwned, a.proxySession
+	a.mu.RUnlock()
+	if !active || !owned {
+		return false, nil
+	}
+	restore := a.systemProxyRestorer
+	if restore == nil {
+		restore = platform.RestoreSystemProxy
+	}
+	restored, err := restore(session)
+	if err != nil {
+		return false, err
+	}
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if !a.proxyActive {
-		return nil
-	}
-	disable := a.systemProxyDisabler
-	if disable == nil {
-		disable = platform.DisableSystemProxy
-	}
-	if err := disable(); err != nil {
-		return err
-	}
 	a.proxyActive = false
-	return nil
+	a.proxyOwned = false
+	a.proxySession = platform.ProxySession{}
+	a.mu.Unlock()
+	return restored, nil
 }
 
 func (a *App) ToggleTun(enabled bool) error {
@@ -513,7 +550,7 @@ func (a *App) Restart() error {
 	if a.TunActive() {
 		flags += " -tun"
 	}
-	return platform.LaunchSelf(flags, platform.IsProcessElevated())
+	return a.launchReplacement(flags, platform.IsProcessElevated())
 }
 
 func (a *App) RecoverAfterResume(ctx context.Context) error {
@@ -569,7 +606,7 @@ func (a *App) LaunchElevated(tun bool) error {
 	if tun {
 		flags += " -tun"
 	}
-	return platform.LaunchSelf(flags, true)
+	return a.launchReplacement(flags, true)
 }
 
 func (a *App) QueryAutostart() (platform.AutostartState, error) { return platform.QueryAutostart() }
@@ -580,7 +617,32 @@ func (a *App) LaunchAutostartElevated(enabled bool) error {
 	} else {
 		flags += " -autostart-disable"
 	}
-	return platform.LaunchSelf(flags, true)
+	return a.launchReplacement(flags, true)
+}
+
+func (a *App) launchReplacement(flags string, elevated bool) error {
+	a.proxyMu.Lock()
+	proxyRestored, proxyErr := a.restoreSystemProxyLocked()
+	a.proxyMu.Unlock()
+	if proxyErr != nil {
+		return fmt.Errorf("prepare system proxy handoff: %w", proxyErr)
+	}
+	if proxyRestored {
+		flags += " -proxy"
+	}
+	launch := a.selfLauncher
+	if launch == nil {
+		launch = platform.LaunchSelf
+	}
+	if err := launch(flags, elevated); err != nil {
+		if proxyRestored {
+			if restoreErr := a.EnableSystemProxy(); restoreErr != nil {
+				return errors.Join(err, fmt.Errorf("restore system proxy after launch failure: %w", restoreErr))
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 func (a *App) SetAutostart(enabled bool) error {
@@ -592,9 +654,11 @@ func (a *App) SetAutostart(enabled bool) error {
 
 func (a *App) Close() error {
 	a.selectorMu.Lock()
+	a.proxyMu.Lock()
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
+		a.proxyMu.Unlock()
 		a.selectorMu.Unlock()
 		return nil
 	}
@@ -603,19 +667,19 @@ func (a *App) Close() error {
 	a.apiPollCancel = nil
 	instance := a.instance
 	a.instance = nil
-	proxyActive := a.proxyActive
-	a.proxyActive = false
 	a.mu.Unlock()
+	_, proxyErr := a.restoreSystemProxyLocked()
+	a.proxyMu.Unlock()
 	a.selectorMu.Unlock()
 	if pollCancel != nil {
 		pollCancel()
 	}
-	if a.options.SystemProxyAuto && proxyActive {
-		_ = platform.DisableSystemProxy()
+	if proxyErr != nil && a.logger != nil {
+		a.logger.Log("System proxy", "Failed to restore system proxy during shutdown: "+proxyErr.Error())
 	}
-	var err error
+	var supervisorErr error
 	if a.supervisor != nil {
-		err = a.supervisor.Close()
+		supervisorErr = a.supervisor.Close()
 	}
 	if instance != nil {
 		instance.Close()
@@ -623,5 +687,5 @@ func (a *App) Close() error {
 	if a.logger != nil {
 		a.logger.Close()
 	}
-	return err
+	return errors.Join(proxyErr, supervisorErr)
 }

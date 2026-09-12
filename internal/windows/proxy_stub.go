@@ -2,5 +2,10 @@
 
 package windows
 
-func EnableSystemProxy(host string, port int) error { return ErrUnsupported }
-func DisableSystemProxy() error                     { return ErrUnsupported }
+type ProxySession struct{}
+
+func EnableSystemProxy(host string, port int) (ProxySession, error) {
+	return ProxySession{}, ErrUnsupported
+}
+
+func RestoreSystemProxy(ProxySession) (bool, error) { return false, ErrUnsupported }
