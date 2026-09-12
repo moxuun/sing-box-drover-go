@@ -33,6 +33,8 @@ type Flags struct {
 const (
 	restartInstanceWait     = 10 * time.Second
 	restartInstanceInterval = 50 * time.Millisecond
+	resumeAPIProbeAttempts  = 5
+	resumeAPIProbeInterval  = 750 * time.Millisecond
 )
 
 func ParseFlags(args []string) Flags {
@@ -559,6 +561,36 @@ func (a *App) Restart() error {
 	return a.launchReplacement(flags, platform.IsProcessElevated())
 }
 
+func probeResumeAPI(ctx context.Context, api *clash.Client, attempts int, interval time.Duration) error {
+	if attempts < 1 {
+		return errors.New("resume API probe attempts must be positive")
+	}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if _, err := api.FetchSelectors(ctx); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if attempt+1 == attempts {
+			break
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return ctx.Err()
+		}
+	}
+	return lastErr
+}
+
 func (a *App) RecoverAfterResume(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -589,10 +621,10 @@ func (a *App) RecoverAfterResume(ctx context.Context) error {
 		if api == nil || !apiReady {
 			return nil
 		}
-		if _, err := api.FetchSelectors(ctx); err == nil {
+		if err := probeResumeAPI(ctx, api, resumeAPIProbeAttempts, resumeAPIProbeInterval); err == nil {
 			return nil
 		} else if logger != nil {
-			logger.Log("Resume", "Clash API unavailable after resume; restarting sing-box: "+err.Error())
+			logger.Log("Resume", "Clash API remained unavailable after resume probes; restarting sing-box: "+err.Error())
 		}
 	} else if logger != nil {
 		logger.Log("Resume", "sing-box is not running after resume; restarting it")

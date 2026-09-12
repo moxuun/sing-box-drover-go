@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -123,6 +124,61 @@ func TestRefreshSelectorsKeepsCacheWhenAPIFails(t *testing.T) {
 	second, err := a.RefreshSelectors(context.Background())
 	if err == nil || len(second) != 1 || second[0].Now != "香港01" {
 		t.Fatalf("cache was not retained on failure: %#v %v", second, err)
+	}
+}
+
+func TestProbeResumeAPIRetriesTransientFailure(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"proxies":{}}`))
+	}))
+	defer server.Close()
+
+	err := probeResumeAPI(context.Background(), clash.NewClient(server.URL, "token"), 5, time.Millisecond)
+	if err != nil {
+		t.Fatalf("probeResumeAPI() error = %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("API probe calls = %d, want 3", calls)
+	}
+}
+
+func TestProbeResumeAPIReturnsLastErrorAfterBoundedRetries(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	err := probeResumeAPI(context.Background(), clash.NewClient(server.URL, "token"), 3, time.Millisecond)
+	if err == nil {
+		t.Fatal("probeResumeAPI() unexpectedly succeeded")
+	}
+	if calls != 3 {
+		t.Fatalf("API probe calls = %d, want 3", calls)
+	}
+	if !strings.Contains(err.Error(), "503") {
+		t.Fatalf("last API error = %v, want HTTP 503 context", err)
+	}
+}
+
+func TestProbeResumeAPIReturnsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("cancelled API probe issued a request")
+	}))
+	defer server.Close()
+
+	err := probeResumeAPI(ctx, clash.NewClient(server.URL, "token"), 3, time.Millisecond)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("probeResumeAPI() error = %v, want context cancellation", err)
 	}
 }
 
