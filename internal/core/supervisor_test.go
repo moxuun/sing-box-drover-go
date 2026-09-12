@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,6 +65,20 @@ func TestWaitForStopCompletionDefersCleanupUntilDoneOrForce(t *testing.T) {
 			t.Fatalf("cleanup ordering = %v, want force,cleanup", events)
 		}
 	})
+}
+
+func TestStopWaitDurationSkipsGracePeriodAfterSignalFailure(t *testing.T) {
+	if got := stopWaitDuration(context.Background(), nil); got != 10*time.Second {
+		t.Fatalf("normal stop wait = %v, want 10s", got)
+	}
+	if got := stopWaitDuration(context.Background(), errors.New("signal unavailable")); got != 0 {
+		t.Fatalf("failed-signal stop wait = %v, want 0", got)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	if got := stopWaitDuration(ctx, errors.New("signal unavailable")); got != 0 {
+		t.Fatalf("failed-signal stop with deadline wait = %v, want 0", got)
+	}
 }
 
 func TestBoundedBufferKeepsTail(t *testing.T) {

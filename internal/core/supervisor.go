@@ -296,6 +296,23 @@ func waitForStopCompletion(cleanup func(), done <-chan struct{}, ctx context.Con
 	}
 }
 
+func stopWaitDuration(ctx context.Context, signalErr error) time.Duration {
+	wait := 10 * time.Second
+	if signalErr != nil {
+		wait = 0
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		deadlineWait := time.Until(deadline)
+		if deadlineWait < wait {
+			wait = deadlineWait
+			if wait < 0 {
+				wait = 0
+			}
+		}
+	}
+	return wait
+}
+
 func (s *Supervisor) Stop(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -326,13 +343,7 @@ func (s *Supervisor) Stop(ctx context.Context) error {
 	if signalErr != nil && s.logger != nil {
 		s.logger.Log("Core", "graceful stop signal failed: "+signalErr.Error())
 	}
-	wait := 10 * time.Second
-	if deadline, ok := ctx.Deadline(); ok {
-		wait = time.Until(deadline)
-		if wait < 0 {
-			wait = 0
-		}
-	}
+	wait := stopWaitDuration(ctx, signalErr)
 	waitForStopCompletion(cleanup, done, ctx, wait, func() { s.forceKill(process) })
 	return nil
 }
