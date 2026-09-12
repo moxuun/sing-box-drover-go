@@ -596,15 +596,27 @@ func (a *App) Restart() error {
 }
 
 func probeResumeAPI(ctx context.Context, api *clash.Client, attempts int, interval time.Duration) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if attempts < 1 {
 		return errors.New("resume API probe attempts must be positive")
 	}
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if _, err := api.FetchSelectors(ctx); err == nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			return nil
 		} else {
 			lastErr = err
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
 		}
 		if attempt+1 == attempts {
 			break

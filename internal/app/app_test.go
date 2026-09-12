@@ -243,6 +243,26 @@ func TestProbeResumeAPIReturnsContextCancellation(t *testing.T) {
 	}
 }
 
+func TestProbeResumeAPIRejectsResponseAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	client := clash.NewClient("http://example.invalid", "token")
+	client.HTTPClient = &http.Client{Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		cancel()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"proxies":{}}`)),
+			Request:    req,
+		}, nil
+	})}
+
+	err := probeResumeAPI(ctx, client, 3, time.Millisecond)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("probeResumeAPI() error = %v, want context cancellation", err)
+	}
+}
+
 func TestRecoverAfterResumeHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
