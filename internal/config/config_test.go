@@ -98,3 +98,14 @@ func TestReadConfigSourceStripsBOM(t *testing.T) {
 		t.Fatalf("BOM JSON should be accepted: %v", err)
 	}
 }
+
+func TestCheckSingBoxConfigRejectsPortAboveTCPRange(t *testing.T) {
+	base := SingBoxConfig{ProxyHost: "127.0.0.1", ProxyPort: 65535}
+	if err := CheckSingBoxConfig(base); err != nil {
+		t.Fatalf("maximum TCP port was rejected: %v", err)
+	}
+	base.ProxyPort = 65536
+	if err := CheckSingBoxConfig(base); err == nil {
+		t.Fatal("port above TCP range was accepted")
+	}
+}

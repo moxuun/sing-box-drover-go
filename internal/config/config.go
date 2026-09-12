@@ -385,5 +385,8 @@ func CheckSingBoxConfig(cfg SingBoxConfig) error {
 	if cfg.ProxyHost == "" || cfg.ProxyPort < 1 {
 		return errors.New("no suitable mixed inbound found for the system proxy")
 	}
+	if cfg.ProxyPort > 65535 {
+		return errors.New("mixed inbound listen port is out of range")
+	}
 	return nil
 }
