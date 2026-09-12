@@ -77,6 +77,17 @@ func TestTaskEnabledFromUTF16XML(t *testing.T) {
 	}
 }
 
+func TestTaskEnabledFromUTF8BytesWithUTF16Declaration(t *testing.T) {
+	data := []byte(`<?xml version="1.0" encoding="UTF-16"?><Task><Settings><Enabled>true</Enabled></Settings></Task>`)
+	got, err := taskEnabledFromXML(data)
+	if err != nil {
+		t.Fatalf("taskEnabledFromXML() mismatched declaration error = %v", err)
+	}
+	if !got {
+		t.Fatal("enabled task with a UTF-16 declaration was reported as disabled")
+	}
+}
+
 func TestSetAutostartDisableIsIdempotentWhenTaskIsMissing(t *testing.T) {
 	state, err := QueryAutostart()
 	if err != nil {

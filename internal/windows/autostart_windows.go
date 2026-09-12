@@ -59,7 +59,7 @@ func autostartCreateArgs(file, username string) []string {
 	return []string{"/Create", "/TN", taskName, "/SC", "ONLOGON", "/RU", username, "/IT", "/RL", "LIMITED", "/TR", tr, "/F"}
 }
 
-func decodeTaskXML(data []byte) ([]byte, bool, error) {
+func decodeTaskXML(data []byte) ([]byte, error) {
 	const (
 		littleEndian = iota
 		bigEndian
@@ -76,11 +76,11 @@ func decodeTaskXML(data []byte) ([]byte, bool, error) {
 	case len(data) >= 2 && data[0] == 0 && data[1] == '<':
 		order = bigEndian
 	default:
-		return data, false, nil
+		return data, nil
 	}
 	payload := data[offset:]
 	if len(payload)%2 != 0 {
-		return nil, false, fmt.Errorf("invalid UTF-16 task definition length")
+		return nil, fmt.Errorf("invalid UTF-16 task definition length")
 	}
 	units := make([]uint16, len(payload)/2)
 	for i := range units {
@@ -90,7 +90,7 @@ func decodeTaskXML(data []byte) ([]byte, bool, error) {
 			units[i] = binary.BigEndian.Uint16(payload[i*2:])
 		}
 	}
-	return []byte(string(utf16.Decode(units))), true, nil
+	return []byte(string(utf16.Decode(units))), nil
 }
 
 func taskEnabledFromXML(data []byte) (bool, error) {
@@ -99,14 +99,17 @@ func taskEnabledFromXML(data []byte) (bool, error) {
 			Enabled *bool `xml:"Enabled"`
 		} `xml:"Settings"`
 	}
-	decoded, utf16XML, err := decodeTaskXML(data)
+	decoded, err := decodeTaskXML(data)
 	if err != nil {
 		return false, err
 	}
 	decoder := xml.NewDecoder(bytes.NewReader(decoded))
-	if utf16XML {
-		decoder.CharsetReader = func(_ string, input io.Reader) (io.Reader, error) {
+	decoder.CharsetReader = func(charset string, input io.Reader) (io.Reader, error) {
+		switch strings.ToLower(strings.TrimSpace(charset)) {
+		case "utf-16", "utf-16le", "utf-16be":
 			return input, nil
+		default:
+			return nil, fmt.Errorf("unsupported task definition encoding %q", charset)
 		}
 	}
 	if err := decoder.Decode(&definition); err != nil {

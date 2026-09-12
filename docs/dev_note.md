@@ -26,7 +26,7 @@
 - `待实机验证` 开机自启使用固定任务计划名称 `sing-box-drover`；同一 Windows 用户下 A、B 版本启用自启时，后一次注册会以 `/F` 覆盖该任务的执行路径，开机只会启动后一次设置的版本，不会产生两个同名自启任务。
 - `已完成` 开机自启任务使用 `/RL LIMITED` 以当前用户权限启动；需要 TUN 时仍沿用启动流程中的按需 UAC 提权，修改任务继续由提权后的替代托盘进程完成，并保留当前 TUN 状态，避免非 TUN 场景长期运行管理员权限托盘。
 - `已完成` Task Scheduler 查询、创建和删除现在使用 10 秒超时；任务计划服务异常时不会无限阻塞启动流程或托盘菜单。
-- `已完成` Task Scheduler 的 `/XML` 输出现在支持 Windows 常见的 UTF-16（含 BOM 或无 BOM）编码；自启验证不会再因 `encoding "UTF-16" declared but Decoder.CharsetReader is nil` 失败。
+- `已完成` Task Scheduler 的 `/XML` 输出现在同时支持原始 UTF-16（含 BOM 或无 BOM），以及字节流已转换但声明仍为 `UTF-16` 的 Windows 输出；自启验证不会再因 `Decoder.CharsetReader is nil` 失败。
 - `已完成` 自启状态查询改用任务计划程序 XML 的 `Settings/Enabled` 字段；任务存在但被禁用时不再误报为已启用，关闭自启时始终执行幂等删除以清理这类任务。
 - `待实机验证` 仍需在真实 Windows 用户登录时确认任务以普通权限启动、TUN 开启场景只在需要时弹出 UAC，并确认已有旧的 `HIGHEST` 任务能够被更新为 `LIMITED`。
 - `已完成` macOS 状态栏菜单支持系统代理、TUN、Selector、重启、Homepage、登录启动和退出，并定期同步 Clash API 首次展开的 provider 节点。
