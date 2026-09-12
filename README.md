@@ -14,9 +14,10 @@
 
 ## 内存占用
 
-托盘控制器通常约 4–8 MiB（Windows 任务管理器的工作集，不包含 sing-box
-内核；实际值会随系统和配置变化）。这个结果基于 Go 1.25.6 的 Windows amd64
-构建。
+历史样本曾约 4–8 MiB（Windows 任务管理器的工作集，不包含 sing-box
+内核；实际值会随系统和配置变化）。这个数字来自 Go 1.25.6 的旧 Windows amd64
+构建，仅供参考，不是当前版本的性能承诺；Go 1.25.14 正式构建仍需在相同条件下
+复测 Working Set 和 Private Memory 后再更新结论。
 
 ![Windows 任务管理器中的托盘内存占用](./docs/memory_usage.png)
 
