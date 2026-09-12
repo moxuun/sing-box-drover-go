@@ -389,6 +389,25 @@ func TestCoreFailureKeepsProxyStateWhenCleanupFails(t *testing.T) {
 	}
 }
 
+func TestEnableSystemProxyRejectsStoppedCore(t *testing.T) {
+	enabled := 0
+	a := &App{
+		config:     config.SingBoxConfig{ProxyHost: "127.0.0.1", ProxyPort: 10808},
+		supervisor: core.NewSupervisor("", nil),
+		systemProxyEnabler: func(string, int) (platform.ProxySession, error) {
+			enabled++
+			return platform.ProxySession{}, nil
+		},
+	}
+
+	if err := a.EnableSystemProxy(); err == nil || !strings.Contains(err.Error(), "not running") {
+		t.Fatalf("EnableSystemProxy() error = %v, want stopped-core error", err)
+	}
+	if enabled != 0 || a.SystemProxyActive() {
+		t.Fatalf("stopped core changed proxy state: enabled=%d active=%v", enabled, a.SystemProxyActive())
+	}
+}
+
 func TestCloseRestoresManuallyEnabledSystemProxy(t *testing.T) {
 	restores := 0
 	a := &App{
@@ -510,6 +529,7 @@ func TestReplacementLaunchFailureReenablesSystemProxy(t *testing.T) {
 			enabled++
 			return platform.ProxySession{}, nil
 		},
+		coreState:    func() core.State { return core.StateRunning },
 		selfLauncher: func(string, bool) error { return launchErr },
 	}
 

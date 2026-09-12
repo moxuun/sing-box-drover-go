@@ -253,6 +253,7 @@ func TestRestartWithConfigReconfiguresChangedProxyAddress(t *testing.T) {
 		},
 		configChecker: func(string) error { return nil },
 		supervisor:    core.NewSupervisor("", nil),
+		coreState:     func() core.State { return core.StateRunning },
 		coreStarter: func(runtimeJSON string) error {
 			steps = append(steps, "start")
 			startedConfig = runtimeJSON
@@ -302,6 +303,7 @@ func TestRestartWithConfigTemporarilyRestoresSameProxyAddress(t *testing.T) {
 		},
 		configChecker: func(string) error { return nil },
 		supervisor:    core.NewSupervisor("", nil),
+		coreState:     func() core.State { return core.StateRunning },
 		coreStarter: func(string) error {
 			steps = append(steps, "start")
 			return nil

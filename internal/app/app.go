@@ -154,6 +154,7 @@ type App struct {
 	selfLauncher        func(string, bool) error
 	configChecker       func(string) error
 	coreStarter         func(string) error
+	coreState           func() core.State
 }
 
 func New(args []string) (*App, error) {
@@ -229,6 +230,7 @@ func NewAt(executable string, args []string) (*App, error) {
 	app.supervisor = core.NewSupervisor(corePath, logger)
 	app.configChecker = app.supervisor.Check
 	app.coreStarter = app.supervisor.Start
+	app.coreState = app.supervisor.State
 	app.supervisor.SetHandler(func(event core.Event) {
 		app.handleCoreEvent(event)
 	})
@@ -507,9 +509,20 @@ func (a *App) EnableSystemProxy() error {
 	a.mu.RLock()
 	closed, active := a.closed, a.proxyActive
 	host, port := a.config.ProxyHost, a.config.ProxyPort
+	supervisor := a.supervisor
+	state := a.coreState
 	a.mu.RUnlock()
 	if closed {
 		return errors.New("controller is closed")
+	}
+	if state == nil {
+		if supervisor == nil {
+			return errors.New("core supervisor is not configured")
+		}
+		state = supervisor.State
+	}
+	if state() != core.StateRunning {
+		return errors.New("sing-box core is not running")
 	}
 	if active {
 		return nil
