@@ -7,6 +7,12 @@ import (
 	"testing"
 )
 
+func TestEnableSystemProxyRejectsBlankHost(t *testing.T) {
+	if _, err := EnableSystemProxy(" \t", 10808); err == nil {
+		t.Fatal("blank system proxy host was accepted")
+	}
+}
+
 func TestProxySettingsEqualIncludesRestorableFields(t *testing.T) {
 	base := proxySettings{
 		flags:         proxyTypeDirect | proxyTypeProxy,

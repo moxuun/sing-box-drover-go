@@ -128,3 +128,9 @@ func TestCheckSingBoxConfigRejectsPortAboveTCPRange(t *testing.T) {
 		t.Fatal("port above TCP range was accepted")
 	}
 }
+
+func TestCheckSingBoxConfigRejectsBlankProxyHost(t *testing.T) {
+	if err := CheckSingBoxConfig(SingBoxConfig{ProxyHost: " \t\r\n", ProxyPort: 1080}); err == nil {
+		t.Fatal("blank mixed inbound host was accepted")
+	}
+}

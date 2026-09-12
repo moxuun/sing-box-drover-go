@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"runtime"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -175,7 +176,7 @@ func proxySettingsEqual(left, right proxySettings) bool {
 }
 
 func EnableSystemProxy(host string, port int) (ProxySession, error) {
-	if host == "" || port < 1 || port > 65535 {
+	if strings.TrimSpace(host) == "" || strings.IndexByte(host, 0) >= 0 || port < 1 || port > 65535 {
 		return ProxySession{}, fmt.Errorf("invalid system proxy address")
 	}
 	original, err := queryProxySettings()
