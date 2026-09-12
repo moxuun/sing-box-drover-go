@@ -158,6 +158,7 @@ type Tray struct {
 	controller       *app.App
 	hWnd             uintptr
 	className        *uint16
+	classOwned       bool
 	icon             uintptr
 	selectors        map[uint32]selectorAction
 	menuBitmaps      []uintptr
@@ -251,11 +252,17 @@ func newTray(controller *app.App) (*Tray, error) {
 	callback := winapi.NewCallback(t.windowProc)
 	class := wndClassEx{CbSize: uint32(unsafe.Sizeof(wndClassEx{})), Style: csHRedraw | csVRedraw, WndProc: callback, Instance: instance}
 	class.ClassName = className
-	if atom, _, registerErr := registerClassEx.Call(uintptr(unsafe.Pointer(&class))); atom == 0 && registerErr != winapi.ERROR_CLASS_ALREADY_EXISTS {
+	atom, _, registerErr := registerClassEx.Call(uintptr(unsafe.Pointer(&class)))
+	if atom == 0 && registerErr != winapi.ERROR_CLASS_ALREADY_EXISTS {
 		return nil, fmt.Errorf("RegisterClassEx: %w", registerErr)
 	}
+	t.classOwned = atom != 0
 	hWnd, _, createErr := createWindowEx.Call(wsExToolWindow|wsExNoActivate, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(className)), 0, 0, 0, 0, 0, 0, 0, instance, 0)
 	if hWnd == 0 {
+		if t.classOwned {
+			_, _, _ = unregisterClass.Call(uintptr(unsafe.Pointer(t.className)), instance)
+			t.classOwned = false
+		}
 		return nil, fmt.Errorf("CreateWindowEx: %w", createErr)
 	}
 	t.hWnd = hWnd
@@ -288,9 +295,10 @@ func (t *Tray) close() error {
 		destroyTrayIcon(t.icon)
 		t.icon = 0
 		t.iconMu.Unlock()
-		if t.className != nil {
+		if t.classOwned && t.className != nil {
 			instance, _, _ := getModuleHandle.Call(0)
 			_, _, _ = unregisterClass.Call(uintptr(unsafe.Pointer(t.className)), instance)
+			t.classOwned = false
 		}
 		t.releaseMenuBitmaps()
 		if t.controller != nil {
