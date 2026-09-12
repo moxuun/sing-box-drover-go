@@ -5,6 +5,8 @@ package tray
 import (
 	_ "embed"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"sync"
 	"unsafe"
 
@@ -165,14 +167,14 @@ func useSharedCheckAndBitmapColumn(menu uintptr) bool {
 // drawn in the first gutter and the flag starts after a fixed gap. This keeps
 // the familiar checkmark while keeping it separate from the flag within the
 // shared bitmap column.
-func (t *Tray) appendSelectorItem(menu uintptr, menuFlags uint32, id uint32, value string, cache map[selectorBitmapKey]uintptr) {
+func (t *Tray) appendSelectorItem(menu uintptr, menuFlags uint32, id uint32, value string, cache map[selectorBitmapKey]uintptr) error {
 	text, code := selectorDisplayInfo(value)
 	if text == "" {
 		text = value
 	}
 	ptr, err := winapi.UTF16PtrFromString(text)
 	if err != nil {
-		return
+		return fmt.Errorf("encode selector item: %w", err)
 	}
 	checked := menuFlags&mfChecked != 0
 	itemFlags := menuFlags
@@ -182,10 +184,10 @@ func (t *Tray) appendSelectorItem(menu uintptr, menuFlags uint32, id uint32, val
 		itemFlags &^= mfChecked
 	}
 	if ok, _, _ := appendMenu.Call(menu, uintptr(itemFlags), uintptr(id), uintptr(unsafe.Pointer(ptr))); ok == 0 {
-		return
+		return errors.New("AppendMenuW failed for selector item")
 	}
 	if code == "" {
-		return
+		return nil
 	}
 	key := selectorBitmapKey{code: code, checked: checked}
 	bmp, exists := cache[key]
@@ -197,7 +199,7 @@ func (t *Tray) appendSelectorItem(menu uintptr, menuFlags uint32, id uint32, val
 		}
 	}
 	if bmp != 0 && setMenuItemBitmap(menu, uintptr(id), bmp) {
-		return
+		return nil
 	}
 	if checked {
 		// If the composite bitmap cannot be attached, restore the native check
@@ -216,6 +218,7 @@ func (t *Tray) appendSelectorItem(menu uintptr, menuFlags uint32, id uint32, val
 			setMenuItemInfo.Call(menu, uintptr(id), 0, uintptr(unsafe.Pointer(&info)))
 		}
 	}
+	return nil
 }
 
 func setMenuItemBitmap(menu, id, bitmap uintptr) bool {

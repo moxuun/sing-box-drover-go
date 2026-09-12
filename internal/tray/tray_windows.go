@@ -465,6 +465,12 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 	if menu == 0 {
 		return 0, fmt.Errorf("CreatePopupMenu: %w", err)
 	}
+	buildComplete := false
+	defer func() {
+		if !buildComplete {
+			t.releaseMenuBitmaps()
+		}
+	}()
 	if !useSharedCheckAndBitmapColumn(menu) {
 		destroyMenu.Call(menu)
 		return 0, errors.New("SetMenuInfo: unable to configure check mark and bitmap column")
@@ -519,7 +525,11 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 					if value == selector.Now {
 						flags |= mfChecked
 					}
-					t.appendSelectorItem(submenu, flags, id, selectorOptionText(selector, value), bitmapCache)
+					if err := t.appendSelectorItem(submenu, flags, id, selectorOptionText(selector, value), bitmapCache); err != nil {
+						destroyMenu.Call(submenu)
+						destroyMenu.Call(menu)
+						return 0, err
+					}
 					t.selectors[id] = selectorAction{selector: selector.Name, value: value}
 					id++
 				}
@@ -533,7 +543,10 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 					if value == selector.Now {
 						flags |= mfChecked
 					}
-					t.appendSelectorItem(menu, flags, id, selectorOptionText(selector, value), bitmapCache)
+					if err := t.appendSelectorItem(menu, flags, id, selectorOptionText(selector, value), bitmapCache); err != nil {
+						destroyMenu.Call(menu)
+						return 0, err
+					}
 					t.selectors[id] = selectorAction{selector: selector.Name, value: value}
 					id++
 				}
@@ -554,6 +567,7 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 	appendText(mfString, cmdHomepage, "Homepage")
 	appendMenu.Call(menu, mfSeparator, 0, 0)
 	appendText(mfString, cmdQuit, "Quit")
+	buildComplete = true
 	return menu, nil
 }
 

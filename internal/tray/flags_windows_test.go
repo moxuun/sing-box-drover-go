@@ -3,10 +3,12 @@
 package tray
 
 import (
+	"strings"
 	"testing"
 	"unsafe"
 
 	winapi "golang.org/x/sys/windows"
+	"sing-box-drover/internal/app"
 	"sing-box-drover/internal/clash"
 )
 
@@ -154,5 +156,23 @@ func TestSelectorOptionTextDisplaysResolvedRuntimeGroup(t *testing.T) {
 	}
 	if got := selectorOptionText(selector, "node-a"); got != "node-a" {
 		t.Fatalf("selectorOptionText() changed an unselected option: %q", got)
+	}
+}
+
+func TestBuildMenuRejectsInvalidSelectorTextAndReleasesBitmaps(t *testing.T) {
+	tray := &Tray{controller: &app.App{}}
+	menu, err := tray.buildMenu([]clash.Selector{
+		{Name: "valid", All: []string{"US node"}, Now: "US node"},
+		{Name: "invalid", All: []string{"bad\x00node"}, Now: "bad\x00node"},
+	})
+	if menu != 0 {
+		destroyMenu.Call(menu)
+		t.Fatal("buildMenu returned a menu after rejecting selector text")
+	}
+	if err == nil || !strings.Contains(err.Error(), "selector item") {
+		t.Fatalf("buildMenu() error = %v, want selector item encoding error", err)
+	}
+	if len(tray.menuBitmaps) != 0 {
+		t.Fatalf("failed menu retained %d bitmap handles", len(tray.menuBitmaps))
 	}
 }
