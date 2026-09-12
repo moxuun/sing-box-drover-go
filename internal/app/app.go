@@ -262,8 +262,11 @@ func staticSelectors(values []config.Selector) []clash.Selector {
 		selector := clash.Selector{Name: value.Name, All: append([]string(nil), value.Outbounds...)}
 		if value.DefaultIndex >= 0 && value.DefaultIndex < len(value.Outbounds) {
 			selector.Now = value.Outbounds[value.DefaultIndex]
-		} else {
+		} else if value.DefaultName != "" {
 			selector.Now = value.DefaultName
+		} else if len(value.Outbounds) > 0 {
+			// sing-box selects the first outbound when `default` is omitted.
+			selector.Now = value.Outbounds[0]
 		}
 		result = append(result, selector)
 	}

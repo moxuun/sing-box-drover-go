@@ -106,6 +106,13 @@ func TestStartupTunRequested(t *testing.T) {
 	}
 }
 
+func TestStaticSelectorsUseFirstOutboundWhenDefaultIsOmitted(t *testing.T) {
+	got := staticSelectors([]config.Selector{{Name: "proxy", Outbounds: []string{"first", "second"}, DefaultIndex: -1}})
+	if len(got) != 1 || got[0].Now != "first" {
+		t.Fatalf("static selector default = %#v, want first outbound", got)
+	}
+}
+
 func TestRefreshSelectorsKeepsCacheWhenAPIFails(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
