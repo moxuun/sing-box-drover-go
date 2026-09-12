@@ -386,7 +386,7 @@ func ReadSingBoxConfig(text string) (SingBoxConfig, error) {
 }
 
 func CheckSingBoxConfig(cfg SingBoxConfig) error {
-	if strings.TrimSpace(cfg.ProxyHost) == "" || cfg.ProxyPort < 1 {
+	if strings.TrimSpace(cfg.ProxyHost) == "" || strings.IndexByte(cfg.ProxyHost, 0) >= 0 || cfg.ProxyPort < 1 {
 		return errors.New("no suitable mixed inbound found for the system proxy")
 	}
 	if cfg.ProxyPort > 65535 {

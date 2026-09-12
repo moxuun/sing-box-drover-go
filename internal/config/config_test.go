@@ -134,3 +134,9 @@ func TestCheckSingBoxConfigRejectsBlankProxyHost(t *testing.T) {
 		t.Fatal("blank mixed inbound host was accepted")
 	}
 }
+
+func TestCheckSingBoxConfigRejectsNULProxyHost(t *testing.T) {
+	if err := CheckSingBoxConfig(SingBoxConfig{ProxyHost: "127.0.0.1\x00", ProxyPort: 1080}); err == nil {
+		t.Fatal("mixed inbound host containing NUL was accepted")
+	}
+}
