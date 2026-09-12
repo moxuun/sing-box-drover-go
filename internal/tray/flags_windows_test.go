@@ -176,3 +176,20 @@ func TestBuildMenuRejectsInvalidSelectorTextAndReleasesBitmaps(t *testing.T) {
 		t.Fatalf("failed menu retained %d bitmap handles", len(tray.menuBitmaps))
 	}
 }
+
+func TestBuildMenuRejectsInvalidSelectorGroupText(t *testing.T) {
+	tray := &Tray{controller: &app.App{}}
+	menu, err := tray.buildMenu([]clash.Selector{
+		{Name: "bad\x00group", All: []string{"node"}, Now: "node"},
+	})
+	if menu != 0 {
+		destroyMenu.Call(menu)
+		t.Fatal("buildMenu returned a menu after rejecting selector group text")
+	}
+	if err == nil || !strings.Contains(err.Error(), "selector group") {
+		t.Fatalf("buildMenu() error = %v, want selector group encoding error", err)
+	}
+	if len(tray.menuBitmaps) != 0 {
+		t.Fatalf("failed menu retained %d bitmap handles", len(tray.menuBitmaps))
+	}
+}

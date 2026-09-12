@@ -476,12 +476,27 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 		return 0, errors.New("SetMenuInfo: unable to configure check mark and bitmap column")
 	}
 	t.selectors = map[uint32]selectorAction{}
-	appendText := func(flags uint32, id uint32, text string) error {
+	appendItem := func(target uintptr, flags uint32, id uintptr, text string) error {
 		ptr, err := winapi.UTF16PtrFromString(text)
 		if err != nil {
 			return err
 		}
-		if ok, _, callErr := appendMenu.Call(menu, uintptr(flags), uintptr(id), uintptr(unsafe.Pointer(ptr))); ok == 0 {
+		if ok, _, callErr := appendMenu.Call(target, uintptr(flags), uintptr(id), uintptr(unsafe.Pointer(ptr))); ok == 0 {
+			if callErr == nil || callErr == winapi.ERROR_SUCCESS {
+				return errors.New("AppendMenuW failed")
+			}
+			return callErr
+		}
+		return nil
+	}
+	appendText := func(flags uint32, id uint32, text string) error {
+		return appendItem(menu, flags, uintptr(id), text)
+	}
+	appendSeparator := func(target uintptr) error {
+		if ok, _, callErr := appendMenu.Call(target, mfSeparator, 0, 0); ok == 0 {
+			if callErr == nil || callErr == winapi.ERROR_SUCCESS {
+				return errors.New("AppendMenuW failed for separator")
+			}
 			return callErr
 		}
 		return nil
@@ -505,7 +520,10 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 		}
 	}
 	if len(selectors) > 0 {
-		appendMenu.Call(menu, mfSeparator, 0, 0)
+		if err := appendSeparator(menu); err != nil {
+			destroyMenu.Call(menu)
+			return 0, err
+		}
 		nested := clash.UseNested(t.controller.Options().SelectorMenuLayout, selectors)
 		id := uint32(cmdSelectorBase)
 		bitmapCache := map[selectorBitmapKey]uintptr{}
@@ -533,11 +551,16 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 					t.selectors[id] = selectorAction{selector: selector.Name, value: value}
 					id++
 				}
-				ptr, _ := winapi.UTF16PtrFromString(selector.Name)
-				appendMenu.Call(menu, mfPopup, submenu, uintptr(unsafe.Pointer(ptr)))
+				if err := appendItem(menu, mfPopup, submenu, selector.Name); err != nil {
+					destroyMenu.Call(submenu)
+					destroyMenu.Call(menu)
+					return 0, fmt.Errorf("append selector menu: %w", err)
+				}
 			} else {
-				ptr, _ := winapi.UTF16PtrFromString(selector.Name)
-				appendMenu.Call(menu, mfString|mfDisabled|mfGrayed, 0, uintptr(unsafe.Pointer(ptr)))
+				if err := appendText(mfString|mfDisabled|mfGrayed, 0, selector.Name); err != nil {
+					destroyMenu.Call(menu)
+					return 0, fmt.Errorf("append selector group: %w", err)
+				}
 				for _, value := range selector.All {
 					flags := uint32(mfString)
 					if value == selector.Now {
@@ -550,11 +573,17 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 					t.selectors[id] = selectorAction{selector: selector.Name, value: value}
 					id++
 				}
-				appendMenu.Call(menu, mfSeparator, 0, 0)
+				if err := appendSeparator(menu); err != nil {
+					destroyMenu.Call(menu)
+					return 0, err
+				}
 			}
 		}
 	}
-	appendMenu.Call(menu, mfSeparator, 0, 0)
+	if err := appendSeparator(menu); err != nil {
+		destroyMenu.Call(menu)
+		return 0, err
+	}
 	if state, err := t.controller.QueryAutostart(); err == nil {
 		t.autostartEnabled = state == platform.AutostartEnabled
 	}
@@ -562,11 +591,28 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 	if t.autostartEnabled {
 		autoFlags |= mfChecked
 	}
-	appendText(autoFlags, cmdAutostart, "Start with Windows")
-	appendText(mfString, cmdRestart, "Restart core")
-	appendText(mfString, cmdHomepage, "Homepage")
-	appendMenu.Call(menu, mfSeparator, 0, 0)
-	appendText(mfString, cmdQuit, "Quit")
+	for _, item := range []struct {
+		flags uint32
+		id    uint32
+		text  string
+	}{
+		{flags: autoFlags, id: cmdAutostart, text: "Start with Windows"},
+		{flags: mfString, id: cmdRestart, text: "Restart core"},
+		{flags: mfString, id: cmdHomepage, text: "Homepage"},
+	} {
+		if err := appendText(item.flags, item.id, item.text); err != nil {
+			destroyMenu.Call(menu)
+			return 0, err
+		}
+	}
+	if err := appendSeparator(menu); err != nil {
+		destroyMenu.Call(menu)
+		return 0, err
+	}
+	if err := appendText(mfString, cmdQuit, "Quit"); err != nil {
+		destroyMenu.Call(menu)
+		return 0, err
+	}
 	buildComplete = true
 	return menu, nil
 }
