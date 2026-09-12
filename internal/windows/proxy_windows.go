@@ -3,6 +3,7 @@
 package windows
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"runtime"
@@ -175,6 +176,16 @@ func proxySettingsEqual(left, right proxySettings) bool {
 		left.autoConfigURL == right.autoConfigURL
 }
 
+func restoreAfterProxyVerificationFailure(original proxySettings, verifyErr error, restore func(proxySettings) error) error {
+	if restoreErr := restore(original); restoreErr != nil {
+		return errors.Join(
+			fmt.Errorf("verify system proxy: %w", verifyErr),
+			fmt.Errorf("restore original system proxy: %w", restoreErr),
+		)
+	}
+	return fmt.Errorf("verify system proxy: %w", verifyErr)
+}
+
 func EnableSystemProxy(host string, port int) (ProxySession, error) {
 	if strings.TrimSpace(host) == "" || strings.IndexByte(host, 0) >= 0 || port < 1 || port > 65535 {
 		return ProxySession{}, fmt.Errorf("invalid system proxy address")
@@ -192,8 +203,7 @@ func EnableSystemProxy(host string, port int) (ProxySession, error) {
 	}
 	applied, err := queryProxySettings()
 	if err != nil {
-		_ = setProxySettings(original)
-		return ProxySession{}, fmt.Errorf("verify system proxy: %w", err)
+		return ProxySession{}, restoreAfterProxyVerificationFailure(original, err, setProxySettings)
 	}
 	return ProxySession{original: original, applied: applied}, nil
 }

@@ -3,13 +3,39 @@
 package windows
 
 import (
+	"errors"
 	"os"
+	"strings"
 	"testing"
 )
 
 func TestEnableSystemProxyRejectsBlankHost(t *testing.T) {
 	if _, err := EnableSystemProxy(" \t", 10808); err == nil {
 		t.Fatal("blank system proxy host was accepted")
+	}
+}
+
+func TestRestoreAfterProxyVerificationFailureReportsRollbackError(t *testing.T) {
+	verifyErr := errors.New("query failed")
+	rollbackErr := errors.New("rollback failed")
+	err := restoreAfterProxyVerificationFailure(proxySettings{}, verifyErr, func(proxySettings) error {
+		return rollbackErr
+	})
+	if !errors.Is(err, verifyErr) || !errors.Is(err, rollbackErr) {
+		t.Fatalf("rollback error = %v, want both verification and rollback errors", err)
+	}
+	if !strings.Contains(err.Error(), "restore original system proxy") {
+		t.Fatalf("rollback error lacks recovery context: %v", err)
+	}
+}
+
+func TestRestoreAfterProxyVerificationFailurePreservesVerificationError(t *testing.T) {
+	verifyErr := errors.New("query failed")
+	err := restoreAfterProxyVerificationFailure(proxySettings{}, verifyErr, func(proxySettings) error {
+		return nil
+	})
+	if !errors.Is(err, verifyErr) || strings.Contains(err.Error(), "restore original system proxy") {
+		t.Fatalf("successful rollback error = %v, want verification error only", err)
 	}
 }
 
