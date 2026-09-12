@@ -16,3 +16,28 @@ func TestAutostartCreateArgsUseLimitedRunLevel(t *testing.T) {
 		}
 	}
 }
+
+func TestTaskEnabledFromXML(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		xml  string
+		want bool
+	}{
+		{name: "enabled", xml: `<Task><Settings><Enabled>true</Enabled></Settings></Task>`, want: true},
+		{name: "disabled", xml: `<Task><Settings><Enabled>false</Enabled></Settings></Task>`, want: false},
+		{name: "default enabled", xml: `<Task><Settings /></Task>`, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := taskEnabledFromXML([]byte(test.xml))
+			if err != nil || got != test.want {
+				t.Fatalf("taskEnabledFromXML() = %v, %v; want %v", got, err, test.want)
+			}
+		})
+	}
+}
+
+func TestTaskEnabledFromXMLRejectsMalformedData(t *testing.T) {
+	if _, err := taskEnabledFromXML([]byte(`<Task>`)); err == nil {
+		t.Fatal("malformed task XML unexpectedly parsed")
+	}
+}

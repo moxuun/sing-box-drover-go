@@ -4,6 +4,7 @@ package windows
 
 import (
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
@@ -45,10 +46,32 @@ func autostartCreateArgs(file, username string) []string {
 	return []string{"/Create", "/TN", taskName, "/SC", "ONLOGON", "/RU", username, "/IT", "/RL", "LIMITED", "/TR", tr, "/F"}
 }
 
+func taskEnabledFromXML(data []byte) (bool, error) {
+	var definition struct {
+		Settings struct {
+			Enabled *bool `xml:"Enabled"`
+		} `xml:"Settings"`
+	}
+	if err := xml.Unmarshal(data, &definition); err != nil {
+		return false, err
+	}
+	if definition.Settings.Enabled == nil {
+		return true, nil
+	}
+	return *definition.Settings.Enabled, nil
+}
+
 func QueryAutostart() (AutostartState, error) {
-	out, err := runTaskScheduler("/Query", "/TN", taskName)
+	out, err := runTaskScheduler("/Query", "/TN", taskName, "/XML")
 	if err == nil {
-		return AutostartEnabled, nil
+		enabled, parseErr := taskEnabledFromXML(out)
+		if parseErr != nil {
+			return AutostartUnknown, fmt.Errorf("parse task definition: %w", parseErr)
+		}
+		if enabled {
+			return AutostartEnabled, nil
+		}
+		return AutostartDisabled, nil
 	}
 	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() != 0 {
 		if taskMissing(out) {
