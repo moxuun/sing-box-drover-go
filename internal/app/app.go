@@ -761,9 +761,10 @@ func (a *App) Close() error {
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
+		_, proxyErr := a.restoreSystemProxyLocked()
 		a.proxyMu.Unlock()
 		a.selectorMu.Unlock()
-		return nil
+		return proxyErr
 	}
 	a.closed = true
 	pollCancel := a.apiPollCancel

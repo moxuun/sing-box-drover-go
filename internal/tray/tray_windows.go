@@ -172,6 +172,7 @@ type Tray struct {
 	resumeRunning    bool
 	done             chan struct{}
 	closeOnce        sync.Once
+	closeErr         error
 }
 
 func Run(controller *app.App) error {
@@ -190,12 +191,12 @@ func runOnTrayThread(run func() error) error {
 	return run()
 }
 
-func run(controller *app.App) error {
+func run(controller *app.App) (runErr error) {
 	tray, err := newTray(controller)
 	if err != nil {
 		return err
 	}
-	defer tray.close()
+	defer func() { runErr = errors.Join(runErr, tray.close()) }()
 	if controller.Options().SystemProxyAuto || controller.Flags().Proxy {
 		if err := controller.EnableSystemProxy(); err != nil {
 			tray.setFault(true)
@@ -263,17 +264,15 @@ func newTray(controller *app.App) (*Tray, error) {
 	traysMu.Unlock()
 	t.icon, err = createTrayIcon(t.runtimeStatus().iconKind())
 	if err != nil {
-		t.close()
-		return nil, err
+		return nil, errors.Join(err, t.close())
 	}
 	if err := t.installIcon(false); err != nil {
-		t.close()
-		return nil, err
+		return nil, errors.Join(err, t.close())
 	}
 	return t, nil
 }
 
-func (t *Tray) close() {
+func (t *Tray) close() error {
 	t.closeOnce.Do(func() {
 		close(t.done)
 		t.iconMu.Lock()
@@ -294,8 +293,11 @@ func (t *Tray) close() {
 			_, _, _ = unregisterClass.Call(uintptr(unsafe.Pointer(t.className)), instance)
 		}
 		t.releaseMenuBitmaps()
-		_ = t.controller.Close()
+		if t.controller != nil {
+			t.closeErr = t.controller.Close()
+		}
 	})
+	return t.closeErr
 }
 
 func (t *Tray) windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {

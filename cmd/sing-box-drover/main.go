@@ -22,7 +22,9 @@ func main() {
 		return
 	}
 	if err := tray.Run(controller); err != nil {
-		_ = controller.Close()
+		if closeErr := controller.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 		fmt.Fprintln(os.Stderr, "sing-box-drover:", err)
 		platform.ShowError("sing-box-drover", err.Error())
 	}

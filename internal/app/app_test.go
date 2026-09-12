@@ -383,6 +383,44 @@ func TestCloseRestoresManuallyEnabledSystemProxy(t *testing.T) {
 	}
 }
 
+func TestCloseReportsSystemProxyRestoreError(t *testing.T) {
+	want := errors.New("settings update failed")
+	a := &App{
+		proxyActive: true,
+		proxyOwned:  true,
+		systemProxyRestorer: func(platform.ProxySession) (bool, error) {
+			return false, want
+		},
+	}
+	if err := a.Close(); !errors.Is(err, want) {
+		t.Fatalf("Close() error = %v, want %v", err, want)
+	}
+}
+
+func TestCloseRetriesProxyRestoreAfterFailure(t *testing.T) {
+	attempts := 0
+	a := &App{
+		proxyActive: true,
+		proxyOwned:  true,
+		systemProxyRestorer: func(platform.ProxySession) (bool, error) {
+			attempts++
+			if attempts == 1 {
+				return false, errors.New("temporary settings failure")
+			}
+			return true, nil
+		},
+	}
+	if err := a.Close(); err == nil {
+		t.Fatal("first Close() unexpectedly succeeded")
+	}
+	if err := a.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+	if attempts != 2 || a.SystemProxyActive() {
+		t.Fatalf("proxy cleanup retry mismatch: attempts=%d active=%v", attempts, a.SystemProxyActive())
+	}
+}
+
 func TestRestoreRelinquishesOwnershipAfterExternalChange(t *testing.T) {
 	a := &App{
 		proxyActive: true,
