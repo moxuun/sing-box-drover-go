@@ -38,6 +38,13 @@ func runTaskScheduler(args ...string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
+func autostartCreateArgs(file, username string) []string {
+	// schtasks expects a single /TR string. Double quotes preserve paths with
+	// spaces while allowing the task action to remain the executable itself.
+	tr := `"` + strings.ReplaceAll(file, `"`, `\"`) + `"`
+	return []string{"/Create", "/TN", taskName, "/SC", "ONLOGON", "/RU", username, "/IT", "/RL", "LIMITED", "/TR", tr, "/F"}
+}
+
 func QueryAutostart() (AutostartState, error) {
 	out, err := runTaskScheduler("/Query", "/TN", taskName)
 	if err == nil {
@@ -77,10 +84,7 @@ func SetAutostart(enabled bool) error {
 	if strings.TrimSpace(currentUser.Username) == "" {
 		return fmt.Errorf("resolve current user: empty username")
 	}
-	// schtasks expects a single /TR string. Double quotes preserve paths with
-	// spaces while allowing the task action to remain the executable itself.
-	tr := `"` + strings.ReplaceAll(file, `"`, `\"`) + `"`
-	if out, err := runTaskScheduler("/Create", "/TN", taskName, "/SC", "ONLOGON", "/RU", currentUser.Username, "/IT", "/RL", "HIGHEST", "/TR", tr, "/F"); err != nil {
+	if out, err := runTaskScheduler(autostartCreateArgs(file, currentUser.Username)...); err != nil {
 		return fmt.Errorf("register task: %w (%s)", err, bytes.TrimSpace(out))
 	}
 	if state, err := QueryAutostart(); err != nil {
