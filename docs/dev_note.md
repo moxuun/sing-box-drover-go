@@ -64,7 +64,7 @@
 - `已完成` GitHub Actions 在推送 `v*` 标签时执行格式检查、测试、`go vet` 和 Windows amd64 构建，并打包托盘程序、兼容命名的 `sing-box-drover.ini` 和 SHA256 校验文件，不捆绑 `sing-box.exe`。
 - `已完成` Windows Runner 行尾问题修复后，`v0.1.1` 至 `v0.1.5` 的远程发布工作流均已成功，标签构建与 GitHub Release 链路已经得到实际验证。
 - `待实机验证` 当前 `main` 比 `v0.1.5` 多出系统代理和自动选择落点显示修改；在 Discord、Selector 菜单和代理清理验证完成前，不应直接把它作为新版本发布。
-- `设计待决定` 发布工作流只在推送版本标签时运行，普通 `main` 提交和 Pull Request 没有自动格式、测试和 vet 门禁；可以增加一条独立的轻量 CI，发布工作流继续只负责标签产物。
+- `已完成` 新增独立的 Windows 持续集成工作流，在普通 push 和 Pull Request 上执行格式检查、全量测试和 `go vet`；发布工作流继续只负责版本标签产物。
 - `设计待决定` `scripts/build.ps1` 会把 `GOTOOLCHAIN`、`GOOS`、`GOARCH` 和 `CGO_ENABLED` 留在调用者的 PowerShell 进程中，也没有验证运行中的旧 EXE 是否导致目标未替换或遗留 `.exe~`；正式构建应恢复原环境并核对最终目标的构建信息。
 - `设计待决定` Go 1.25.6 已落后于同系列的安全修复版本，并在 Go 1.27 发布后退出官方支持窗口，`golang.org/x/sys` 也仍固定在 v0.36.0；不能只因旧内存结论长期冻结工具链。应先在同一配置、同一生命周期下比较 Go 1.25 最新补丁版与受支持版本的 Working Set、Private Memory 和功能，再决定工具链与依赖升级基线。
 - `待实机验证` 2026-09-12 对当前运行的 Go 1.25.6 产物连续采样约为 30.2 MiB Working Set、19.3 MiB Private Memory、406 handles，与 README 的 4–8 MiB 截图不一致；该产物构建信息仍指向 `v0.1.5+dirty`，需要用当前提交的正式构建冷启动后按相同口径复测，不能据此认定代码回归或继续沿用旧宣传值。

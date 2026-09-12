@@ -1,0 +1,41 @@
+name: 持续集成
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Windows 检查
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Go 1.25.6
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.6"
+          cache: true
+
+      - name: 检查格式
+        shell: pwsh
+        run: |
+          $files = gofmt -l cmd internal tools
+          if ($files) {
+            Write-Host "以下文件未经过 gofmt："
+            $files
+            exit 1
+          }
+
+      - name: 运行测试
+        shell: pwsh
+        run: go test -count=1 ./...
+
+      - name: 运行静态检查
+        shell: pwsh
+        run: go vet ./...
