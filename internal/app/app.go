@@ -595,6 +595,9 @@ func (a *App) RecoverAfterResume(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	a.selectorMu.Lock()
 	defer a.selectorMu.Unlock()
 
@@ -623,11 +626,16 @@ func (a *App) RecoverAfterResume(ctx context.Context) error {
 		}
 		if err := probeResumeAPI(ctx, api, resumeAPIProbeAttempts, resumeAPIProbeInterval); err == nil {
 			return nil
+		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
 		} else if logger != nil {
 			logger.Log("Resume", "Clash API remained unavailable after resume probes; restarting sing-box: "+err.Error())
 		}
 	} else if logger != nil {
 		logger.Log("Resume", "sing-box is not running after resume; restarting it")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	if err := a.restartWithConfig(tun, false); err != nil {

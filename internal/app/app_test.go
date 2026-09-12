@@ -182,6 +182,17 @@ func TestProbeResumeAPIReturnsContextCancellation(t *testing.T) {
 	}
 }
 
+func TestRecoverAfterResumeHonorsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	a := &App{supervisor: core.NewSupervisor("", nil)}
+
+	err := a.RecoverAfterResume(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RecoverAfterResume() error = %v, want context cancellation", err)
+	}
+}
+
 func TestAPIPollCancellationStopsStaleRetry(t *testing.T) {
 	var calls atomic.Int32
 	started := make(chan struct{})
