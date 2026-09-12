@@ -41,3 +41,16 @@ func TestTaskEnabledFromXMLRejectsMalformedData(t *testing.T) {
 		t.Fatal("malformed task XML unexpectedly parsed")
 	}
 }
+
+func TestSetAutostartDisableIsIdempotentWhenTaskIsMissing(t *testing.T) {
+	state, err := QueryAutostart()
+	if err != nil {
+		t.Skipf("cannot inspect task scheduler: %v", err)
+	}
+	if state != AutostartDisabled {
+		t.Skip("the fixed task exists; leave it unchanged in this read-only test")
+	}
+	if err := SetAutostart(false); err != nil {
+		t.Fatalf("SetAutostart(false) with no task: %v", err)
+	}
+}

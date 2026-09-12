@@ -84,9 +84,6 @@ func QueryAutostart() (AutostartState, error) {
 
 func SetAutostart(enabled bool) error {
 	if !enabled {
-		if state, err := QueryAutostart(); err == nil && state == AutostartDisabled {
-			return nil
-		}
 		out, err := runTaskScheduler("/Delete", "/TN", taskName, "/F")
 		if err != nil {
 			// Deleting an absent task is idempotent for this UI action.
