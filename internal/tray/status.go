@@ -21,6 +21,9 @@ func (s trayRuntimeStatus) iconKind() trayIconKind {
 	if s.fault || s.coreState == core.StateFailed {
 		return trayIconRed
 	}
+	if s.coreState == core.StateStopped {
+		return trayIconPlain
+	}
 	if s.systemProxy || s.tun {
 		return trayIconGreen
 	}
@@ -30,6 +33,9 @@ func (s trayRuntimeStatus) iconKind() trayIconKind {
 func (s trayRuntimeStatus) tooltip() string {
 	if s.fault || s.coreState == core.StateFailed {
 		return "Error"
+	}
+	if s.coreState == core.StateStopped {
+		return "Not running"
 	}
 	if s.systemProxy && s.tun {
 		return "System Proxy + TUN"

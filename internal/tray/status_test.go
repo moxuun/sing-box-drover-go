@@ -14,6 +14,7 @@ func TestTrayRuntimeStatus(t *testing.T) {
 		wantTooltip string
 	}{
 		{name: "stopped", status: trayRuntimeStatus{coreState: core.StateStopped}, wantIcon: trayIconPlain, wantTooltip: "Not running"},
+		{name: "stopped with stale desired modes", status: trayRuntimeStatus{coreState: core.StateStopped, systemProxy: true, tun: true}, wantIcon: trayIconPlain, wantTooltip: "Not running"},
 		{name: "proxy", status: trayRuntimeStatus{coreState: core.StateRunning, systemProxy: true}, wantIcon: trayIconGreen, wantTooltip: "System Proxy"},
 		{name: "tun", status: trayRuntimeStatus{coreState: core.StateRunning, tun: true}, wantIcon: trayIconGreen, wantTooltip: "TUN"},
 		{name: "proxy and tun", status: trayRuntimeStatus{coreState: core.StateRunning, systemProxy: true, tun: true}, wantIcon: trayIconGreen, wantTooltip: "System Proxy + TUN"},
