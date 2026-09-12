@@ -208,6 +208,9 @@ func (c *Client) FetchSelectors(ctx context.Context) ([]Selector, error) {
 }
 
 func (c *Client) SwitchSelector(ctx context.Context, selector, value string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	path := "/proxies/" + url.PathEscape(selector)
 	body, err := json.Marshal(struct {
 		Name string `json:"name"`
@@ -218,10 +221,20 @@ func (c *Client) SwitchSelector(ctx context.Context, selector, value string) err
 	if _, err := c.Do(ctx, http.MethodPut, path, body); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	// Match the reference controller: flush existing connections after a
 	// successful selector switch, but do not turn a successful switch into a
 	// failure if an older/custom core omits this endpoint.
-	_, _ = c.Do(ctx, http.MethodDelete, "/connections", nil)
+	if _, err := c.Do(ctx, http.MethodDelete, "/connections", nil); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return nil
 }
 

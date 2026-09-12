@@ -3,10 +3,12 @@ package clash
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestClientReusesDefaultHTTPClientAndTransport(t *testing.T) {
@@ -81,6 +83,44 @@ func TestSwitchSelectorUsesBearerPutAndFlush(t *testing.T) {
 	}
 	if body["name"] != "香港 01" {
 		t.Fatalf("unexpected PUT body: %#v", body)
+	}
+}
+
+func TestSwitchSelectorReturnsCancellationDuringConnectionFlush(t *testing.T) {
+	flushStarted := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method == http.MethodDelete {
+			close(flushStarted)
+			<-r.Context().Done()
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- NewClient(server.URL, "secret").SwitchSelector(ctx, "proxy", "node")
+	}()
+	select {
+	case <-flushStarted:
+		cancel()
+	case <-time.After(time.Second):
+		t.Fatal("connection flush did not start")
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("SwitchSelector() error = %v, want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SwitchSelector() did not return after cancellation")
 	}
 }
 
