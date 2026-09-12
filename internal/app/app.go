@@ -421,9 +421,15 @@ func (a *App) ensureOpen() error {
 }
 
 func (a *App) RefreshSelectors(ctx context.Context) ([]clash.Selector, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	a.selectorMu.Lock()
 	defer a.selectorMu.Unlock()
 	if err := a.ensureOpen(); err != nil {
+		return a.Selectors(), err
+	}
+	if err := ctx.Err(); err != nil {
 		return a.Selectors(), err
 	}
 	if a.api == nil {
@@ -431,6 +437,9 @@ func (a *App) RefreshSelectors(ctx context.Context) ([]clash.Selector, error) {
 	}
 	fresh, err := a.api.FetchSelectors(ctx)
 	if err != nil {
+		return a.Selectors(), err
+	}
+	if err := ctx.Err(); err != nil {
 		return a.Selectors(), err
 	}
 	if err := a.ensureOpen(); err != nil {
@@ -444,9 +453,15 @@ func (a *App) RefreshSelectors(ctx context.Context) ([]clash.Selector, error) {
 }
 
 func (a *App) SwitchSelector(ctx context.Context, selectorName, value string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	a.selectorMu.Lock()
 	defer a.selectorMu.Unlock()
 	if err := a.ensureOpen(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if a.api == nil {

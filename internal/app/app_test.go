@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -127,6 +128,53 @@ func TestRefreshSelectorsKeepsCacheWhenAPIFails(t *testing.T) {
 	}
 }
 
+func TestRefreshSelectorsDoesNotApplyCanceledResponse(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	client := clash.NewClient("http://example.invalid", "token")
+	client.HTTPClient = &http.Client{Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		close(started)
+		<-release
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK",
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"proxies":{"fresh":{"type":"Selector","all":["new"],"now":"new"}}}`)),
+			Request:    req,
+		}, nil
+	})}
+	a := &App{
+		api:       client,
+		selectors: []clash.Selector{{Name: "cached", All: []string{"old"}, Now: "old"}},
+		events:    make(chan Event, 1),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := a.RefreshSelectors(ctx)
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("selector request did not start")
+	}
+	cancel()
+	close(release)
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("RefreshSelectors() error = %v, want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("selector request did not finish")
+	}
+	got := a.Selectors()
+	if len(got) != 1 || got[0].Name != "cached" || got[0].Now != "old" {
+		t.Fatalf("canceled response changed selector cache: %#v", got)
+	}
+}
+
 func TestProbeResumeAPIRetriesTransientFailure(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +194,12 @@ func TestProbeResumeAPIRetriesTransientFailure(t *testing.T) {
 	if calls != 3 {
 		t.Fatalf("API probe calls = %d, want 3", calls)
 	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func TestProbeResumeAPIReturnsLastErrorAfterBoundedRetries(t *testing.T) {
