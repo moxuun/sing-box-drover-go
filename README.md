@@ -18,6 +18,9 @@
 - macOS 12+ universal：原生 AppKit 状态栏、`networksetup` 系统代理、LaunchAgent 登录启动和按需管理员提权；发布包同时包含 arm64 与 x86_64。
 - 两端都要求用户自行提供对应平台的 `sing-box`/`sing-box.exe` 和真实配置，不内置代理内核。
 
+macOS 的包结构、Gatekeeper 处理和本地运行检查见
+[使用说明](docs/usage_note.md#macos-本地运行检查)。
+
 ## 内存占用
 
 历史样本曾约 4–8 MiB（Windows 任务管理器的工作集，不包含 sing-box
