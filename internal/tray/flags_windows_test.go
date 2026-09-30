@@ -92,7 +92,36 @@ func TestCreateSelectorBitmap(t *testing.T) {
 			deleteObject.Call(bitmap)
 			t.Fatalf("unchecked selector bitmap has %d check-column pixels", checkPixels)
 		}
+		flagOffset := checkWidth + bitmapGap
+		flagTop := (height - flagHeight) / 2
+		flagPixels := 0
+		for y := 0; y < flagHeight; y++ {
+			for x := 0; x < flagWidth; x++ {
+				if pixels[(flagTop+y)*width+flagOffset+x] != background {
+					flagPixels++
+				}
+			}
+		}
+		if flagPixels == 0 {
+			deleteObject.Call(bitmap)
+			t.Fatalf("selector bitmap (checked=%t) has no flag pixels", checked)
+		}
 		deleteObject.Call(bitmap)
+	}
+}
+
+func TestNormalizeNativeCheckMakesMaskOpaque(t *testing.T) {
+	background := rgb(12, 34, 56)
+	foreground := rgb(200, 180, 160)
+	pixels := []uint32{0x00ffffff, 0, 0x00123456, background}
+	if !normalizeNativeCheck(pixels, 2, 2, 2, 2, background, foreground) {
+		t.Fatal("normalizeNativeCheck returned false")
+	}
+	if pixels[0] != background || pixels[1] != foreground {
+		t.Fatalf("normalized mask colors = %#x, %#x", pixels[0], pixels[1])
+	}
+	if pixels[2] != 0xff123456 || pixels[3] != background {
+		t.Fatalf("normalized mask alpha/colors = %#x, %#x", pixels[2], pixels[3])
 	}
 }
 

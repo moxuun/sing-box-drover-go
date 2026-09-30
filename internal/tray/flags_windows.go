@@ -94,6 +94,7 @@ var (
 	createDIBSection   = gdi32.NewProc("CreateDIBSection")
 	setDIBits          = gdi32.NewProc("SetDIBits")
 	getDIBits          = gdi32.NewProc("GetDIBits")
+	gdiFlush           = gdi32.NewProc("GdiFlush")
 	createCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
 	selectObject       = gdi32.NewProc("SelectObject")
 	deleteDC           = gdi32.NewProc("DeleteDC")
@@ -312,7 +313,7 @@ func createSelectorBitmap(code string, checked bool) uintptr {
 		height = flagHeight
 	}
 
-	var bits uintptr
+	var bits unsafe.Pointer
 	info := bitmapInfo{
 		header: bitmapInfoHeader{
 			size:        uint32(unsafe.Sizeof(bitmapInfoHeader{})),
@@ -331,12 +332,12 @@ func createSelectorBitmap(code string, checked bool) uintptr {
 		0,
 		0,
 	)
-	if hbitmap == 0 || bits == 0 {
+	if hbitmap == 0 || bits == nil {
 		return 0
 	}
 
 	background := menuColor()
-	pixels := make([]uint32, width*height)
+	pixels := unsafe.Slice((*uint32)(bits), width*height)
 	for i := range pixels {
 		pixels[i] = background
 	}
@@ -354,27 +355,24 @@ func createSelectorBitmap(code string, checked bool) uintptr {
 			)
 		}
 	}
-	if result, _, _ := setDIBits.Call(
-		0,
-		hbitmap,
-		0,
-		uintptr(height),
-		uintptr(unsafe.Pointer(&pixels[0])),
-		uintptr(unsafe.Pointer(&info)),
-		dibRGBColors,
-	); result == 0 {
-		deleteObject.Call(hbitmap)
-		return 0
-	}
 	if checked && !drawNativeCheck(hbitmap, checkWidth, checkHeight) {
 		deleteObject.Call(hbitmap)
 		return 0
 	}
 	if checked {
+		// DrawFrameControl writes through GDI. Flush it before touching the
+		// DIB section's directly writable pixels again.
+		if result, _, _ := gdiFlush.Call(); result == 0 {
+			deleteObject.Call(hbitmap)
+			return 0
+		}
 		// DrawFrameControl returns a black-on-white menu mask. Convert the
 		// mask's white background back to the menu color before the bitmap is
 		// attached, otherwise it would show as a white rectangle on the menu.
-		normalizeNativeCheck(hbitmap, &info, width, height, checkWidth, checkHeight, background, menuTextColor())
+		if !normalizeNativeCheck(pixels, width, height, checkWidth, checkHeight, background, menuTextColor()) {
+			deleteObject.Call(hbitmap)
+			return 0
+		}
 	}
 	return hbitmap
 }
@@ -418,47 +416,28 @@ func drawNativeCheck(hbitmap uintptr, width, height int) bool {
 	return ok != 0
 }
 
-func normalizeNativeCheck(hbitmap uintptr, info *bitmapInfo, width, height, checkWidth, checkHeight int, background, foreground uint32) bool {
-	dc, _, _ := createCompatibleDC.Call(0)
-	if dc == 0 {
-		return false
-	}
-	defer deleteDC.Call(dc)
-	pixels := make([]uint32, width*height)
-	if result, _, _ := getDIBits.Call(
-		dc,
-		hbitmap,
-		0,
-		uintptr(height),
-		uintptr(unsafe.Pointer(&pixels[0])),
-		uintptr(unsafe.Pointer(info)),
-		dibRGBColors,
-	); result == 0 {
+func normalizeNativeCheck(pixels []uint32, width, height, checkWidth, checkHeight int, background, foreground uint32) bool {
+	if len(pixels) < width*height {
 		return false
 	}
 	for y := 0; y < checkHeight && y < height; y++ {
 		for x := 0; x < checkWidth && x < width; x++ {
 			index := y*width + x
-			// GetDIBits may return a zero alpha byte for the mask even though
-			// the RGB channels contain the documented black-on-white pixels.
+			// DrawFrameControl may leave a zero alpha byte even though the RGB
+			// channels contain the documented black-on-white pixels. Normalize
+			// every pixel in this column so the menu cannot treat the mask as
+			// transparent after a display/power transition.
 			switch pixels[index] & 0x00ffffff {
 			case 0x00ffffff:
 				pixels[index] = background
 			case 0:
 				pixels[index] = foreground
+			default:
+				pixels[index] |= 0xff000000
 			}
 		}
 	}
-	result, _, _ := setDIBits.Call(
-		dc,
-		hbitmap,
-		0,
-		uintptr(height),
-		uintptr(unsafe.Pointer(&pixels[0])),
-		uintptr(unsafe.Pointer(info)),
-		dibRGBColors,
-	)
-	return result != 0
+	return true
 }
 
 func menuColor() uint32 {

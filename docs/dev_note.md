@@ -91,6 +91,7 @@
 - `已完成` 托盘关键 Win32 调用现在统一归一化空的 `GetLastError`，启动、菜单和通知图标失败时不会再把 `%!w(<nil>)` 暴露给用户；真实托盘故障提示仍需实机触发确认。
 - `已完成` 托盘菜单遇到无法编码的 Selector 节点名称时会报告构建错误并清理已创建的菜单位图，不再静默留下失配的命令映射或 GDI 资源。
 - `已完成` 托盘菜单现在检查选择器分组标题、分隔线和底部操作项的 Win32 追加结果；文本编码或菜单资源失败时会返回错误并销毁不完整菜单，不再静默显示半个菜单。
+- `待实机验证` 2026-09-16 实机观察到控制器跨 S0 Modern Standby 保持运行时，某次首次打开菜单未显示 Selector 的复合勾选/国旗位图，随后再次打开菜单自行恢复；现已将复合位图改为直接写入 DIB 像素、在 GDI 勾选绘制后执行 `GdiFlush` 并规范化 alpha，Windows 自动测试通过，但真实睡眠唤醒循环和 Start11 启用/停用 A/B 仍待确认，暂不改动内核、Clash API 或睡眠恢复策略。
 - `待实机验证` 图标颜色、tooltip 和取消系统代理/TUN 后的状态需要在真实托盘中确认，自动化测试不能替代视觉检查。
 - `已完成` Windows 正式构建统一使用 `scripts/build.ps1`、Go 1.25.14、应用图标和 manifest；macOS 正式构建统一使用 `scripts/build-macos.sh`、CGO 和 `resources/macos/Info.plist`，默认输出 Universal `.app`。
 - `已完成` GitHub Actions 在推送 `v*` 标签时执行格式检查、测试、`go vet`，并在 Windows 与 macOS runner 上分别打包发布产物，最后由独立任务统一创建 GitHub Release。
