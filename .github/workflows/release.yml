@@ -113,6 +113,7 @@ jobs:
       - name: 发布
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --verify-tag \

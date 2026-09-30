@@ -95,6 +95,7 @@
 - `待实机验证` 图标颜色、tooltip 和取消系统代理/TUN 后的状态需要在真实托盘中确认，自动化测试不能替代视觉检查。
 - `已完成` Windows 正式构建统一使用 `scripts/build.ps1`、Go 1.25.14、应用图标和 manifest；macOS 正式构建统一使用 `scripts/build-macos.sh`、CGO 和 `resources/macos/Info.plist`，默认输出 Universal `.app`。
 - `已完成` GitHub Actions 在推送 `v*` 标签时执行格式检查、测试、`go vet`，并在 Windows 与 macOS runner 上分别打包发布产物，最后由独立任务统一创建 GitHub Release。
+- `已完成` 发布工作流拆出独立的 Release 任务后，该任务没有检出仓库，`gh release create` 会因 `failed to run git: fatal: not a git repository` 失败；现在为发布步骤显式设置 `GH_REPO: ${{ github.repository }}`，Windows 与 macOS 产物构建成功后能正常创建 GitHub Release。
 
 - `已完成` Windows Runner 行尾问题修复后，`v0.1.1` 至 `v0.1.5` 的远程发布工作流均已成功，标签构建与 GitHub Release 链路已经得到实际验证。
 - `待实机验证` 当前 `main` 比 `v0.1.5` 多出系统代理和自动选择落点显示修改；在 Discord、Selector 菜单和代理清理验证完成前，不应直接把它作为新版本发布。
