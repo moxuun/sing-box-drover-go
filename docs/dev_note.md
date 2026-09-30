@@ -2,7 +2,7 @@
 
 ## 功能点与改进记录
 
-状态说明：`已完成` 表示代码和自动检查已具备；`待实机验证` 表示还需要在真实 Windows 托盘、UAC、睡眠唤醒或网络环境中确认；`设计待决定` 表示已经审查出问题，但不代表已经修改。
+状态说明：`已完成` 表示代码和自动检查已具备；`待实机验证` 表示还需要在真实 Windows/macOS 托盘、提权、睡眠唤醒或网络环境中确认；`设计待决定` 表示已经审查出问题，但不代表已经修改。
 
 ### 协作规则
 
@@ -11,9 +11,9 @@
 
 ### 核心功能
 
-- `已完成` 轻量 Windows 托盘控制器使用用户提供的外置 `sing-box.exe` 和原生配置，不内置代理内核，也不承担订阅管理、配置编辑或流量统计。
-- `已完成` 托盘负责单实例运行、启动/停止/重启内核、显示运行状态、打开 Homepage，以及处理必要的 Windows 集成。
-- `已完成` 使用原生 Win32 消息循环、DPI 感知和通知区域图标，避免引入 Electron、WebView 或大型 UI 框架。
+- `已完成` 轻量跨平台托盘控制器使用用户提供的外置 `sing-box`/`sing-box.exe` 和原生配置，不内置代理内核，也不承担订阅管理、配置编辑或流量统计。
+- `已完成` 托盘负责单实例运行、启动/停止/重启内核、显示运行状态、打开 Homepage，以及处理必要的 Windows/macOS 集成。
+- `已完成` Windows 使用原生 Win32 消息循环和通知区域图标；macOS 使用 `fyne.io/systray` 的原生 Objective-C/AppKit 状态栏实现，避免 Electron、WebView 或大型 UI 框架。
 - `已完成` 通过运行中内核的 Clash API 读取 Selector，并使用 `PUT /proxies/<selector>` 切换节点；provider 展开的节点、国家/地区旗帜和当前选择状态会显示在托盘菜单中。
 - `已完成` 静态 Selector 缓存现在遵循 sing-box 的默认行为：配置省略 `default` 时先勾选 `outbounds` 的第一项；明确填写的默认值仍原样保留。
 - `已完成` Selector 刷新和切换会尊重调用方的上下文取消；即使底层传输在取消后返回，或切换后的旧连接清理请求被取消，也不会把过期响应写入当前 Selector 缓存。
@@ -28,6 +28,14 @@
 - `已完成` Task Scheduler 查询、创建和删除现在使用 10 秒超时；任务计划服务异常时不会无限阻塞启动流程或托盘菜单。
 - `已完成` 自启状态查询改用任务计划程序 XML 的 `Settings/Enabled` 字段；任务存在但被禁用时不再误报为已启用，关闭自启时始终执行幂等删除以清理这类任务。
 - `待实机验证` 仍需在真实 Windows 用户登录时确认任务以普通权限启动、TUN 开启场景只在需要时弹出 UAC，并确认已有旧的 `HIGHEST` 任务能够被更新为 `LIMITED`。
+- `已完成` macOS 状态栏菜单支持系统代理、TUN、Selector、重启、Homepage、登录启动和退出，并定期同步 Clash API 首次展开的 provider 节点。
+- `已完成` macOS 系统代理通过 `networksetup` 修改当前默认网络服务的 HTTP、HTTPS、SOCKS、PAC、自动发现和绕过列表；普通权限实例会按需交接给管理员实例，外部修改代理后恢复流程会放弃覆盖，恢复比较会忽略关闭状态的端点残留值。
+- `已完成` macOS 单实例使用 `flock`，提权交接会把原用户锁文件路径传给 root 实例，避免普通权限与管理员权限实例同时运行。
+- `已完成` macOS 系统代理和 TUN 交接共用 `osascript ... with administrator privileges` 启动替代实例；普通启动使用独立 session，避免终端退出后中断控制器。
+- `已完成` macOS 登录启动写入 `~/Library/LaunchAgents/com.moxuun.sing-box-drover.plist`；管理员权限实例拒绝写入 root 用户的 LaunchAgent。
+- `已完成` macOS 监听 `NSWorkspaceDidWakeNotification`，唤醒后复用 `RecoverAfterResume` 检查内核与 Clash API。
+- `已完成` macOS `.app` 使用 `LSUIElement` 隐藏 Dock 图标；默认构建 arm64 + x86_64 Universal 二进制，固定 `minos`/`LSMinimumSystemVersion` 为 macOS 12.0，删除各架构中间文件后再执行 ad-hoc 签名，避免签名后资源缺失。
+- `待实机验证` 仍需要在真实 macOS 用户会话中确认系统代理授权、LaunchAgent 登录启动、管理员 TUN 托盘、睡眠唤醒和真实 sing-box 配置的完整生命周期。
 
 ### 内核与配置边界
 
@@ -83,11 +91,12 @@
 - `已完成` 托盘菜单遇到无法编码的 Selector 节点名称时会报告构建错误并清理已创建的菜单位图，不再静默留下失配的命令映射或 GDI 资源。
 - `已完成` 托盘菜单现在检查选择器分组标题、分隔线和底部操作项的 Win32 追加结果；文本编码或菜单资源失败时会返回错误并销毁不完整菜单，不再静默显示半个菜单。
 - `待实机验证` 图标颜色、tooltip 和取消系统代理/TUN 后的状态需要在真实托盘中确认，自动化测试不能替代视觉检查。
-- `已完成` 正式构建统一使用 `scripts/build.ps1`、Go 1.25.14、应用图标和 Windows manifest，输出固定为 `output/sing-box-dover-go.exe`；根目录裸 `go build` 不作为交付物。
-- `已完成` GitHub Actions 在推送 `v*` 标签时执行格式检查、测试、`go vet` 和 Windows amd64 构建，并打包托盘程序、兼容命名的 `sing-box-drover.ini` 和 SHA256 校验文件，不捆绑 `sing-box.exe`。
+- `已完成` Windows 正式构建统一使用 `scripts/build.ps1`、Go 1.25.14、应用图标和 manifest；macOS 正式构建统一使用 `scripts/build-macos.sh`、CGO 和 `resources/macos/Info.plist`，默认输出 Universal `.app`。
+- `已完成` GitHub Actions 在推送 `v*` 标签时执行格式检查、测试、`go vet`，并在 Windows 与 macOS runner 上分别打包发布产物，最后由独立任务统一创建 GitHub Release。
+
 - `已完成` Windows Runner 行尾问题修复后，`v0.1.1` 至 `v0.1.5` 的远程发布工作流均已成功，标签构建与 GitHub Release 链路已经得到实际验证。
 - `待实机验证` 当前 `main` 比 `v0.1.5` 多出系统代理和自动选择落点显示修改；在 Discord、Selector 菜单和代理清理验证完成前，不应直接把它作为新版本发布。
-- `已完成` 新增独立的 Windows 持续集成工作流，在普通 push 和 Pull Request 上执行格式检查、全量测试和 `go vet`；发布工作流继续只负责版本标签产物。
+- `已完成` 持续集成工作流在 Windows 和 macOS runner 上执行格式检查、全量测试和 `go vet`；发布工作流继续只负责版本标签产物。
 - `已完成` `scripts/build.ps1` 会保存并恢复调用者原有的 `GOTOOLCHAIN`、`GOOS`、`GOARCH` 和 `CGO_ENABLED` 环境变量，同时继续清理临时资源文件。
 - `待实机验证` 正式构建仍需在运行中的旧 EXE 场景核对目标替换结果、构建信息和是否遗留 `.exe~`；脚本不会强制结束用户正在运行的程序。
 - `已完成` 工具链从 Go 1.25.6 更新到同系列最新补丁 Go 1.25.14；该版本纳入截至 2026-08-19 的同系列安全和稳定性修复，并继续使用 Go 1.25 主版本构建基线。
@@ -102,7 +111,7 @@
 
 ## 当前维护边界
 
-后续每个功能点单独讨论、修改和验证；自动测试、静态检查和正式构建通过，只能证明代码路径和产物基本成立，不能替代 Windows 托盘、UAC、睡眠唤醒、系统代理和真实网络的针对性验证。
+后续每个功能点单独讨论、修改和验证；自动测试、静态检查和正式构建通过，只能证明代码路径和产物基本成立，不能替代 Windows/macOS 托盘、提权、睡眠唤醒、系统代理和真实网络的针对性验证。
 
 ## 目录结构
 
@@ -110,10 +119,10 @@
 - `internal/app`：应用编排；
 - `internal/config`：INI、JSON 读取和 TUN 过滤；
 - `internal/clash`：Clash API 访问、选择器读取和切换；
-- `internal/core`：所管理的 `sing-box.exe` 生命周期；
-- `internal/tray`：原生 Win32 托盘和选择器菜单渲染；
-- `internal/windows`：系统代理、提权、单实例和开机启动；
-- `resources`：Windows 应用图标和权限清单；
+- `internal/core`：所管理的 `sing-box`/`sing-box.exe` 生命周期；
+- `internal/tray`：Win32/AppKit 托盘、状态图标和选择器菜单渲染；
+- `internal/windows`：跨平台系统集成层（Windows Win32、macOS networksetup/LaunchAgent/AppKit 通知），目录名保留以兼容现有导入；
+- `resources`：Windows 应用图标/权限清单和 macOS `Info.plist`；
 - `scripts`：可复现的本地构建脚本；
 - `docs`：用户说明和开发资料；
 - `tools`：国旗资源生成器等离线开发工具；
@@ -122,7 +131,7 @@
 
 ## 本地构建
 
-托盘控制器是原生 Windows 程序，不内置 sing-box 内核：
+托盘控制器不内置 sing-box 内核。Windows 构建：
 
 ```powershell
 $env:GOTOOLCHAIN = "go1.25.14"
@@ -131,10 +140,23 @@ go vet ./...
 .\scripts\build.ps1
 ```
 
-构建脚本使用固定版本的 Go 资源生成器，把 `resources/app.ico` 和
+Windows 构建脚本使用固定版本的 Go 资源生成器，把 `resources/app.ico` 和
 `resources/app.manifest` 临时生成到 `cmd/sing-box-drover/resource_windows_amd64.syso`，
 再链接进 Windows GUI 程序；构建结束后会删除这个中间文件。GitHub Actions
 调用同一脚本，因此发布产物也会带有应用图标和 `asInvoker` 清单。
+
+macOS 构建需要安装 Xcode Command Line Tools，并启用 CGO：
+
+```bash
+GOTOOLCHAIN=go1.25.14 go test ./...
+GOTOOLCHAIN=go1.25.14 go vet ./...
+VERSION=dev ./scripts/build-macos.sh
+```
+
+脚本默认构建 arm64 + x86_64 Universal `.app`，保留包旁边的
+`sing-box-drover.ini`，并执行 ad-hoc 签名。只构建当前架构时可设置
+`GOARCH=arm64` 或 `GOARCH=amd64`；需要使用其他最低系统版本时可设置
+`MACOS_MIN_VERSION`，同时保持 `Info.plist` 与 Mach-O 部署目标一致。
 
 `go.mod` 暂时将 Go 1.25.14 固定为低内存构建基线。`toolchain` 指令不会让
 已经运行的 Go 1.27 自动降级，因此需要在 PowerShell 中设置
@@ -152,12 +174,16 @@ go vet ./...
 ## 自动发布
 
 推送以 `v` 开头的版本标签（例如 `v0.1.0`）后，`.github/workflows/release.yml`
-会自动运行格式检查、测试、静态检查和 Windows amd64 构建，并创建对应的
-GitHub Release。
+会在 Windows 和 macOS runner 上分别运行格式检查、测试、静态检查和构建，再由
+单独的发布任务统一创建 GitHub Release。
 
-发布包名称为 `sing-box-dover-go-v版本-windows-amd64.zip`，压缩包内包含
-`sing-box-dover-go.exe` 和兼容旧安装的 `sing-box-drover.ini`，不包含
-`sing-box.exe` 内核。Release 同时提供 ZIP 的 SHA256 校验文件。
+Windows 发布包为 `sing-box-dover-go-v版本-windows-amd64.zip`，包含
+`sing-box-dover-go.exe` 和兼容旧安装的 `sing-box-drover.ini`。
+
+macOS 发布包为 `sing-box-drover-v版本-macos-universal.zip`，包含
+`sing-box-drover.app` 和旁边的 `sing-box-drover.ini`，其中的 Universal
+二进制同时支持 arm64 与 x86_64。两个平台都不包含 sing-box 内核；Release
+同时提供 ZIP 的 SHA256 校验文件。
 
 发布示例：
 

@@ -65,6 +65,10 @@ func startupTunRequested(sbConfig config.SingBoxConfig, options config.Options, 
 	return sbConfig.HasTunInbound && (flags.Tun || options.TunStartMode == "on")
 }
 
+func startupProxyRequested(options config.Options, flags Flags) bool {
+	return options.SystemProxyAuto || flags.Proxy
+}
+
 // retryInstanceAcquisition keeps the restart handoff bounded while allowing
 // the old controller to release its mutex after the replacement was launched.
 // The clock and sleep functions are injected so the handoff policy can be
@@ -166,7 +170,7 @@ func New(args []string) (*App, error) {
 }
 
 func NewAt(executable string, args []string) (*App, error) {
-	processDir := filepath.Dir(executable)
+	processDir := platform.RuntimeDir(executable)
 	options, err := config.LoadOptions(filepath.Join(processDir, "sing-box-drover.ini"))
 	if err != nil {
 		return nil, err
@@ -205,7 +209,7 @@ func NewAt(executable string, args []string) (*App, error) {
 		logger.Close()
 		return nil, err
 	}
-	corePath := filepath.Join(options.SBDir, "sing-box.exe")
+	corePath := filepath.Join(options.SBDir, platform.CoreExecutableName())
 	if _, err := os.Stat(corePath); err != nil {
 		instance.Close()
 		logger.Close()
@@ -247,10 +251,11 @@ func NewAt(executable string, args []string) (*App, error) {
 		logger.Log("Autostart", "autostart "+status)
 	}
 	wantTun := startupTunRequested(sbConfig, options, flags)
-	if wantTun && !platform.IsProcessElevated() {
-		if err := app.LaunchElevated(true); err != nil {
+	wantProxy := startupProxyRequested(options, flags)
+	if (wantTun || (wantProxy && platform.SystemProxyRequiresElevation())) && !platform.IsProcessElevated() {
+		if err := app.launchElevatedLocked(wantTun, wantProxy, wantTun); err != nil {
 			_ = app.Close()
-			return nil, fmt.Errorf("launch elevated controller for TUN: %w", err)
+			return nil, fmt.Errorf("launch elevated controller for privileged features: %w", err)
 		}
 		_ = app.Close()
 		return nil, ErrElevationHandoff
@@ -712,15 +717,29 @@ func (a *App) RecoverAfterResume(ctx context.Context) error {
 func (a *App) LaunchElevated(tun bool) error {
 	a.selectorMu.Lock()
 	defer a.selectorMu.Unlock()
+	return a.launchElevatedLocked(tun, false, tun)
+}
+
+func (a *App) LaunchSystemProxyElevated() error {
+	a.selectorMu.Lock()
+	defer a.selectorMu.Unlock()
+	return a.launchElevatedLocked(a.TunActive(), true, false)
+}
+
+func (a *App) launchElevatedLocked(tun, proxy, requireTun bool) error {
 	if err := a.ensureOpen(); err != nil {
 		return err
 	}
-	if _, err := a.checkConfigCandidate(tun, tun); err != nil {
+	candidate, err := a.checkConfigCandidate(tun, requireTun)
+	if err != nil {
 		return err
 	}
 	flags := "-restart"
-	if tun {
+	if candidate.tun {
 		flags += " -tun"
+	}
+	if proxy {
+		flags += " -proxy"
 	}
 	return a.launchReplacement(flags, true)
 }
@@ -779,7 +798,7 @@ func (a *App) SetAutostart(enabled bool) error {
 	if err := a.ensureOpen(); err != nil {
 		return err
 	}
-	if !platform.IsProcessElevated() {
+	if platform.AutostartRequiresElevation() && !platform.IsProcessElevated() {
 		return platform.ErrElevationRequired
 	}
 	return platform.SetAutostart(enabled)

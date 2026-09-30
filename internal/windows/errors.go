@@ -3,6 +3,6 @@ package windows
 import "errors"
 
 var (
-	ErrUnsupported       = errors.New("Windows integration is unavailable on this platform")
+	ErrUnsupported       = errors.New("platform integration is unavailable on this OS")
 	ErrElevationRequired = errors.New("administrator elevation is required")
 )

@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 package tray
 
@@ -8,4 +8,4 @@ import (
 	"sing-box-drover/internal/app"
 )
 
-func Run(*app.App) error { return errors.New("the tray UI is only available on Windows") }
+func Run(*app.App) error { return errors.New("the tray UI is only available on Windows and macOS") }

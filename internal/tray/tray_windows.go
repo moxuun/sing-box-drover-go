@@ -152,8 +152,6 @@ var (
 	trays   = map[uintptr]*Tray{}
 )
 
-type selectorAction struct{ selector, value string }
-
 type Tray struct {
 	controller       *app.App
 	hWnd             uintptr
@@ -630,13 +628,6 @@ func (t *Tray) buildMenu(selectors []clash.Selector) (uintptr, error) {
 	}
 	buildComplete = true
 	return menu, nil
-}
-
-func selectorOptionText(selector clash.Selector, value string) string {
-	if value == selector.Now && selector.ResolvedNow != "" && selector.ResolvedNow != value {
-		return value + "（当前：" + selector.ResolvedNow + "）"
-	}
-	return value
 }
 
 func (t *Tray) handleCommand(command uint32) {
