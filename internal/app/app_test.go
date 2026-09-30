@@ -106,6 +106,26 @@ func TestStartupTunRequested(t *testing.T) {
 	}
 }
 
+func TestStartupProxyRequested(t *testing.T) {
+	tests := []struct {
+		name    string
+		options config.Options
+		flags   Flags
+		want    bool
+	}{
+		{name: "configured automatic proxy", options: config.Options{SystemProxyAuto: true}, want: true},
+		{name: "manual proxy handoff", flags: Flags{Proxy: true}, want: true},
+		{name: "disabled", options: config.Options{SystemProxyAuto: false}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := startupProxyRequested(test.options, test.flags); got != test.want {
+				t.Fatalf("startupProxyRequested() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestStaticSelectorsUseFirstOutboundWhenDefaultIsOmitted(t *testing.T) {
 	got := staticSelectors([]config.Selector{{Name: "proxy", Outbounds: []string{"first", "second"}, DefaultIndex: -1}})
 	if len(got) != 1 || got[0].Now != "first" {
@@ -585,6 +605,9 @@ func TestClosedControllerRejectsLifecycleAndSelectorOperations(t *testing.T) {
 	}
 	if err := a.LaunchElevated(true); !errors.Is(err, errControllerClosed) {
 		t.Fatalf("LaunchElevated() error = %v, want closed error", err)
+	}
+	if err := a.LaunchSystemProxyElevated(); !errors.Is(err, errControllerClosed) {
+		t.Fatalf("LaunchSystemProxyElevated() error = %v, want closed error", err)
 	}
 	if err := a.LaunchAutostartElevated(true); !errors.Is(err, errControllerClosed) {
 		t.Fatalf("LaunchAutostartElevated() error = %v, want closed error", err)

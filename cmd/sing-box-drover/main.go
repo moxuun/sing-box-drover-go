@@ -14,7 +14,7 @@ func main() {
 	platform.EnableDPIAwareness()
 	controller, err := app.New(os.Args[1:])
 	if err != nil {
-		if errors.Is(err, app.ErrElevationHandoff) {
+		if errors.Is(err, app.ErrElevationHandoff) || errors.Is(err, app.ErrAlreadyRunning) {
 			return
 		}
 		fmt.Fprintln(os.Stderr, "sing-box-drover:", err)

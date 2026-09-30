@@ -9,8 +9,16 @@ permissions:
 
 jobs:
   verify:
-    name: Windows 检查
-    runs-on: windows-latest
+    name: ${{ matrix.name }} 检查
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: macOS
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: 检出代码
@@ -23,19 +31,19 @@ jobs:
           cache: true
 
       - name: 检查格式
-        shell: pwsh
+        shell: bash
         run: |
-          $files = gofmt -l cmd internal tools
-          if ($files) {
-            Write-Host "以下文件未经过 gofmt："
-            $files
+          files=$(gofmt -l cmd internal tools)
+          if [[ -n "$files" ]]; then
+            echo "以下文件未经过 gofmt："
+            echo "$files"
             exit 1
-          }
+          fi
 
       - name: 运行测试
-        shell: pwsh
+        shell: bash
         run: go test -count=1 ./...
 
       - name: 运行静态检查
-        shell: pwsh
+        shell: bash
         run: go vet ./...
