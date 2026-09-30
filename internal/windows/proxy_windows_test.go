@@ -15,6 +15,57 @@ func TestEnableSystemProxyRejectsBlankHost(t *testing.T) {
 	}
 }
 
+func TestRestoreTargetTurnsOffItsOwnLeftoverProxy(t *testing.T) {
+	leftover := proxySettings{
+		flags:  proxyTypeProxy,
+		server: "http://127.0.0.1:10808",
+		bypass: "<local>;127.*",
+	}
+	target := restoreTarget(leftover, "127.0.0.1")
+	if target.flags&proxyTypeProxy != 0 {
+		t.Fatalf("leftover proxy was kept enabled: %+v", target)
+	}
+	if target.flags&proxyTypeDirect == 0 {
+		t.Fatalf("restore target is neither direct nor proxy: %+v", target)
+	}
+}
+
+func TestRestoreTargetKeepsUserProxy(t *testing.T) {
+	cases := []proxySettings{
+		{flags: proxyTypeDirect | proxyTypeProxy, server: "http://proxy.example:8080", bypass: "<local>"},
+		{flags: proxyTypeDirect | proxyTypeProxy, server: "http=127.0.0.1:10808;https=proxy.example:8080", bypass: "<local>"},
+		{flags: proxyTypeDirect, server: "http://127.0.0.1:10808", bypass: "<local>"},
+		{flags: proxyTypeDirect | proxyTypeProxy, server: "", bypass: ""},
+	}
+	for _, original := range cases {
+		if target := restoreTarget(original, "127.0.0.1"); target != original {
+			t.Fatalf("user proxy settings were changed: %+v -> %+v", original, target)
+		}
+	}
+}
+
+func TestProxyHostsMatchAcceptsWinINetForms(t *testing.T) {
+	cases := []struct {
+		server string
+		host   string
+		want   bool
+	}{
+		{"http://127.0.0.1:10808", "127.0.0.1", true},
+		{"127.0.0.1:10808", "127.0.0.1", true},
+		{"http=127.0.0.1:10808;https=127.0.0.1:10808", "127.0.0.1", true},
+		{"http://LOCALHOST:10808", "localhost", true},
+		{"http=127.0.0.1:10808;https=proxy.example:8080", "127.0.0.1", false},
+		{"http://proxy.example:8080", "127.0.0.1", false},
+		{"http://127.0.0.1:10809", "127.0.0.1", true},
+		{"", "127.0.0.1", false},
+	}
+	for _, tc := range cases {
+		if got := proxyHostsMatch(tc.server, tc.host); got != tc.want {
+			t.Fatalf("proxyHostsMatch(%q, %q) = %v, want %v", tc.server, tc.host, got, tc.want)
+		}
+	}
+}
+
 func TestRestoreAfterProxyVerificationFailureReportsRollbackError(t *testing.T) {
 	verifyErr := errors.New("query failed")
 	rollbackErr := errors.New("rollback failed")
