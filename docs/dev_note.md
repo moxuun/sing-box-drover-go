@@ -240,6 +240,11 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
+打标签前先 `git fetch` 并确认 `main` 已经跟上 `origin/main`：标签一旦推上去
+就会直接触发构建和发布。如果本地 `main` 落后于远端（例如远端刚合了 PR），
+标签会落在一个不在 `main` 上的提交，只能删掉标签、取消对应的 workflow run、
+rebase 之后重新打。
+
 ## 提交前检查
 
 ```powershell
