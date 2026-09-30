@@ -9,6 +9,10 @@
 - 从 `examples/sing-box-drover.ini` 复制并改名得到的 `sing-box-drover.ini`；
 - 真实的 `config.json`。
 
+这里的 `config.json` 必须是 sing-box 原生配置。v2rayN/Xray 配置中的
+`inbounds[].protocol`、`streamSettings` 等格式不能直接交给 sing-box，需先转换
+或改用 sing-box 专用配置。
+
 Windows 发布包是一个目录，直接放入 `sing-box.exe`、`sing-box-drover.ini` 和
 `config.json` 后运行 `sing-box-dover-go.exe`。
 
@@ -17,6 +21,8 @@ macOS 发布包同时提供 arm64 和 x86_64：
 ```text
 sing-box-drover-v版本/
 ├── sing-box-drover.app
+├── sing-box
+├── config.json
 └── sing-box-drover.ini
 ```
 
@@ -28,12 +34,53 @@ sing-box-drover-v版本/
 xattr -dr com.apple.quarantine /path/to/sing-box-drover.app
 ```
 
+如果 `sing-box` 来自浏览器下载并被 Gatekeeper 隔离，命令行检查也可能无输出
+退出。请只对复制到运行目录的内核副本移除隔离属性：
+
+```bash
+xattr -cr /path/to/runtime/sing-box
+```
+
 也可以通过 `sb-dir` 和 `sb-config-file` 指向其他位置。控制器通过标准输入把
 运行时 JSON 交给内核，切换 TUN 或系统代理时不会改写源配置。
+
+macOS 上 `sb-dir` 留空时，控制器会使用 `.app` 所在目录查找 `sing-box`。一个
+适合首次运行的配置如下：
+
+```ini
+[sing-box-drover]
+sb-dir =
+sb-config-file = config.json
+system-proxy-auto = off
+tun-start-mode = off
+log-file = sing-box-drover.log
+```
 
 托盘里的 `Homepage` 会打开 `sing-box-drover.ini` 中的 `homepage-url`。该项
 接受 `http://` 或 `https://` 地址，例如可直接填写本地 Web 面板
 `http://127.0.0.1:9090/ui/`。
+
+## macOS 本地运行检查
+
+复制好 `.app`、`sing-box`、`config.json` 和 `sing-box-drover.ini` 后，先直接
+检查内核配置，不要一开始就开启系统代理或 TUN：
+
+```bash
+/path/to/runtime/sing-box --disable-color check -c /path/to/runtime/config.json
+open /path/to/runtime/sing-box-drover.app
+```
+
+控制器不显示 Dock 图标。启动成功后，图标会出现在菜单栏中；可用以下命令确认
+控制器和内核都在运行，并持续查看日志：
+
+```bash
+ps -axo pid,ppid,stat,command | grep -E 'sing-box-drover|sing-box --disable-color'
+tail -f /path/to/runtime/sing-box-drover.log
+```
+
+首次验证应先确认菜单栏菜单、Selector、`Restart core`、`Homepage` 和 `Quit`
+正常，再单独测试系统代理、TUN、登录启动以及睡眠唤醒。系统代理和 TUN 会修改
+真实系统状态，测试结束后应确认菜单状态和系统代理设置均已恢复。
 
 ## 首次测试
 

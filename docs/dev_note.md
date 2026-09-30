@@ -36,6 +36,7 @@
 - `已完成` macOS 登录启动写入 `~/Library/LaunchAgents/com.moxuun.sing-box-drover.plist`；管理员权限实例拒绝写入 root 用户的 LaunchAgent。
 - `已完成` macOS 监听 `NSWorkspaceDidWakeNotification`，唤醒后复用 `RecoverAfterResume` 检查内核与 Clash API。
 - `已完成` macOS `.app` 使用 `LSUIElement` 隐藏 Dock 图标；默认构建 arm64 + x86_64 Universal 二进制，固定 `minos`/`LSMinimumSystemVersion` 为 macOS 12.0，删除各架构中间文件后再执行 ad-hoc 签名，避免签名后资源缺失。
+- `已完成` 2026-09-30 在 macOS 27.0.1 arm64 上使用本地构建和 sing-box 1.13.4 完成普通权限启动验证：`.app`、外置内核、Clash API 和状态菜单均可正常运行，验证时明确关闭了系统代理和 TUN。
 - `待实机验证` 仍需要在真实 macOS 用户会话中确认系统代理授权、LaunchAgent 登录启动、管理员 TUN 托盘、睡眠唤醒和真实 sing-box 配置的完整生命周期。
 
 ### 内核与配置边界
@@ -159,6 +160,48 @@ VERSION=dev ./scripts/build-macos.sh
 `sing-box-drover.ini`，并执行 ad-hoc 签名。只构建当前架构时可设置
 `GOARCH=arm64` 或 `GOARCH=amd64`；需要使用其他最低系统版本时可设置
 `MACOS_MIN_VERSION`，同时保持 `Info.plist` 与 Mach-O 部署目标一致。
+
+### macOS 本地运行
+
+以下命令使用已忽略提交的 `output/local-dev` 进行单架构本地验证。把内核和配置
+替换为实际路径，并先保持系统代理与 TUN 关闭：
+
+```bash
+RUN_DIR="$PWD/output/local-dev"
+mkdir -p "$RUN_DIR"
+
+GOARCH=arm64 VERSION=dev \
+  ./scripts/build-macos.sh "$RUN_DIR/sing-box-drover.app"
+
+cp /path/to/sing-box "$RUN_DIR/sing-box"
+cp /path/to/config.json "$RUN_DIR/config.json"
+
+cat > "$RUN_DIR/sing-box-drover.ini" <<EOF
+[sing-box-drover]
+sb-dir = $RUN_DIR
+sb-config-file = config.json
+system-proxy-auto = off
+tun-start-mode = off
+log-file = $RUN_DIR/sing-box-drover.log
+homepage-url = https://github.com/moxuun/sing-box-drover-go
+EOF
+
+"$RUN_DIR/sing-box" --disable-color check -c "$RUN_DIR/config.json"
+open "$RUN_DIR/sing-box-drover.app"
+tail -f "$RUN_DIR/sing-box-drover.log"
+```
+
+另一终端可检查进程和监听端口：
+
+```bash
+ps -axo pid,ppid,stat,command | grep -E 'sing-box-drover|sing-box --disable-color'
+lsof -nP -iTCP -sTCP:LISTEN | grep sing-box
+```
+
+来自浏览器下载的内核副本可能带有 `com.apple.quarantine`，会被 Gatekeeper 直接
+终止。此时只对 `output/local-dev/sing-box` 副本执行 `xattr -cr`，不要修改原始
+内核文件。普通权限验证通过后，再单独测试管理员提权、系统代理、TUN、
+LaunchAgent 和睡眠唤醒。
 
 `go.mod` 暂时将 Go 1.25.14 固定为低内存构建基线。`toolchain` 指令不会让
 已经运行的 Go 1.27 自动降级，因此需要在 PowerShell 中设置
