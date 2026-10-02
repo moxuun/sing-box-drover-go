@@ -21,7 +21,7 @@ func TestRestoreTargetTurnsOffItsOwnLeftoverProxy(t *testing.T) {
 		server: "http://127.0.0.1:10808",
 		bypass: "<local>;127.*",
 	}
-	target := restoreTarget(leftover, "127.0.0.1")
+	target := restoreTarget(leftover, "127.0.0.1", 10808)
 	if target.flags&proxyTypeProxy != 0 {
 		t.Fatalf("leftover proxy was kept enabled: %+v", target)
 	}
@@ -32,36 +32,41 @@ func TestRestoreTargetTurnsOffItsOwnLeftoverProxy(t *testing.T) {
 
 func TestRestoreTargetKeepsUserProxy(t *testing.T) {
 	cases := []proxySettings{
+		// Another local proxy on the same host but a different port is not ours.
+		{flags: proxyTypeProxy, server: "http://127.0.0.1:7890", bypass: "<local>"},
 		{flags: proxyTypeDirect | proxyTypeProxy, server: "http://proxy.example:8080", bypass: "<local>"},
 		{flags: proxyTypeDirect | proxyTypeProxy, server: "http=127.0.0.1:10808;https=proxy.example:8080", bypass: "<local>"},
 		{flags: proxyTypeDirect, server: "http://127.0.0.1:10808", bypass: "<local>"},
 		{flags: proxyTypeDirect | proxyTypeProxy, server: "", bypass: ""},
 	}
 	for _, original := range cases {
-		if target := restoreTarget(original, "127.0.0.1"); target != original {
+		if target := restoreTarget(original, "127.0.0.1", 10808); target != original {
 			t.Fatalf("user proxy settings were changed: %+v -> %+v", original, target)
 		}
 	}
 }
 
-func TestProxyHostsMatchAcceptsWinINetForms(t *testing.T) {
+func TestProxyAddressMatchAcceptsWinINetForms(t *testing.T) {
 	cases := []struct {
 		server string
 		host   string
+		port   int
 		want   bool
 	}{
-		{"http://127.0.0.1:10808", "127.0.0.1", true},
-		{"127.0.0.1:10808", "127.0.0.1", true},
-		{"http=127.0.0.1:10808;https=127.0.0.1:10808", "127.0.0.1", true},
-		{"http://LOCALHOST:10808", "localhost", true},
-		{"http=127.0.0.1:10808;https=proxy.example:8080", "127.0.0.1", false},
-		{"http://proxy.example:8080", "127.0.0.1", false},
-		{"http://127.0.0.1:10809", "127.0.0.1", true},
-		{"", "127.0.0.1", false},
+		{"http://127.0.0.1:10808", "127.0.0.1", 10808, true},
+		{"127.0.0.1:10808", "127.0.0.1", 10808, true},
+		{"http=127.0.0.1:10808;https=127.0.0.1:10808", "127.0.0.1", 10808, true},
+		{"http://LOCALHOST:10808", "localhost", 10808, true},
+		{"http://[::1]:10808", "::1", 10808, true},
+		{"http=127.0.0.1:10808;https=proxy.example:8080", "127.0.0.1", 10808, false},
+		{"http://proxy.example:8080", "127.0.0.1", 10808, false},
+		{"http://127.0.0.1:10809", "127.0.0.1", 10808, false},
+		{"http://127.0.0.1", "127.0.0.1", 10808, false},
+		{"", "127.0.0.1", 10808, false},
 	}
 	for _, tc := range cases {
-		if got := proxyHostsMatch(tc.server, tc.host); got != tc.want {
-			t.Fatalf("proxyHostsMatch(%q, %q) = %v, want %v", tc.server, tc.host, got, tc.want)
+		if got := proxyAddressMatch(tc.server, tc.host, tc.port); got != tc.want {
+			t.Fatalf("proxyAddressMatch(%q, %q, %d) = %v, want %v", tc.server, tc.host, tc.port, got, tc.want)
 		}
 	}
 }
