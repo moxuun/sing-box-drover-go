@@ -339,9 +339,12 @@ func (t *Tray) windowProc(hwnd uintptr, message uint32, wParam, lParam uintptr) 
 			}
 		}
 	case wmQueryEndSession:
-		_ = t.controller.Close()
+		// This message only asks whether the session may end, and the logoff can
+		// still be cancelled afterwards. Closing here would leave a tray on the
+		// desktop that no longer owns the core or the system proxy.
 		return 1
 	case wmEndSession:
+		// The session really is ending now, so the core goes with it.
 		if wParam != 0 {
 			_ = t.controller.Close()
 		}
