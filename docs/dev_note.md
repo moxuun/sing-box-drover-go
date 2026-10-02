@@ -6,151 +6,128 @@
 
 ### 协作规则
 
-- `已完成` 本项目相关的每个功能开发、问题修复、设计审查、方案讨论或验证任务，都要在任务结束前同步更新本文档；同一功能优先更新原条目，避免重复记录。
-- `已完成` 开发文档只记录维护者需要了解的功能边界、实现改进、验证结论和未决事项，普通用户的安装、配置和操作步骤继续放在用户文档中。
+- `已完成` 每个功能开发、修复、审查、讨论和验证任务结束前同步本文档；同一功能更新原条目，不重复记录。
+- `已完成` 本文件只记维护边界、实现改进、验证结论和未决事项；用户操作说明放用户文档。
 
 ### 核心功能
 
-- `已完成` 轻量跨平台托盘控制器使用用户提供的外置 `sing-box`/`sing-box.exe` 和原生配置，不内置代理内核，也不承担订阅管理、配置编辑或流量统计。
-- `已完成` 托盘负责单实例运行、启动/停止/重启内核、显示运行状态、打开 Homepage，以及处理必要的 Windows/macOS 集成。
-- `已完成` Windows 使用原生 Win32 消息循环和通知区域图标；macOS 使用 `fyne.io/systray` 的原生 Objective-C/AppKit 状态栏实现，避免 Electron、WebView 或大型 UI 框架。
-- `已完成` 通过运行中内核的 Clash API 读取 Selector，并使用 `PUT /proxies/<selector>` 切换节点；provider 展开的节点、国家/地区旗帜和当前选择状态会显示在托盘菜单中。
-- `已完成` 静态 Selector 缓存现在遵循 sing-box 的默认行为：配置省略 `default` 时先勾选 `outbounds` 的第一项；明确填写的默认值仍原样保留。
-- `已完成` Selector 刷新和切换会尊重调用方的上下文取消；即使底层传输在取消后返回，或切换后的旧连接清理请求被取消，也不会把过期响应写入当前 Selector 缓存。
-- `已完成` Clash API 客户端底层请求会把 nil context 归一化为后台上下文，与刷新、切换入口的调用约定一致，不会把无效上下文交给 `net/http`。
-- `待实机验证` 读取运行中 `URLTest.now`，在指向自动选择组的当前 Selector 选项后显示实际落点；落点仅用于显示，不新增单独的手动切换入口。
-- `已完成` Selector 菜单保留 Windows 原生勾选样式，并处理勾选标记与节点旗帜重叠的问题；不同菜单布局仍属于现有配置能力，暂不继续扩展。
-- `已完成` Homepage 支持配置自定义的 `http://` 或 `https://` 地址，未配置时默认指向本项目仓库，而不是上游仓库。
-- `已完成` 普通单击托盘可切换 Windows 系统代理，Shift 单击可切换 TUN；这两项用户主动操作保留为现有功能。
-- `已完成` TUN 启动模式支持按配置启动，并在普通权限进程需要 TUN 时通过 UAC 提权后把控制权交给新的托盘实例。
-- `待实机验证` 开机自启使用固定任务计划名称 `sing-box-drover`；同一 Windows 用户下 A、B 版本启用自启时，后一次注册会以 `/F` 覆盖该任务的执行路径，开机只会启动后一次设置的版本，不会产生两个同名自启任务。
-- `已完成` 开机自启任务使用 `/RL LIMITED` 以当前用户权限启动；需要 TUN 时仍沿用启动流程中的按需 UAC 提权，修改任务继续由提权后的替代托盘进程完成，并保留当前 TUN 状态，避免非 TUN 场景长期运行管理员权限托盘。
-- `已完成` 自启设置的提权交接改为一次性助手：`-autostart-enable` / `-autostart-disable` 在 `NewAt` 里于获取单实例和读取配置之前处理，成功后返回 `ErrAutostartHandled`，进程不接管控制器、不启动内核、不建托盘即退出，所以再也不会因为一次打开自启就留下长期以管理员运行的托盘和内核。`LaunchAutostartElevated` 不再传 `-restart`、不再携带 TUN 状态，也不再做系统代理交接：助手不启动内核，交出去就没人恢复代理。托盘不再自我关闭，勾选状态在下次构建菜单时重查。附带的行为变化：自启更新不再做配置预检，配置损坏不再阻止开启自启。`TestAutostartHandoffLaunchesOneShotHelper` 验证两种开关都不带 `-restart`、不碰系统代理，并不再被配置检查挡住。
-- `待实机验证` 需要在真实 Windows 上确认：普通权限下勾选「Start with Windows」，UAC 通过后原托盘继续运行且任务管理器中仍是非管理员，任务计划里注册成功；拒绝 UAC 时原托盘保留并提示。
-- `已完成` 自启任务的账户身份不再取自提权后的 `user.Current()`：托盘在发起提权前把自己的账户名通过 `-autostart-owner` 传给一次性助手，助手用 `SetAutostart(enabled, owner)` 注册任务，`owner` 为空时才回落到 `user.Current()`（托盘自身已经提权的那条路径）。跨账户 UAC（标准用户 A 用管理员 B 的凭据提权）不再把任务注册给 B。`ParseFlags` 为此支持带值选项，`autostartCreateArgs` 的 argv 形状未变（一直就是显式 `/RU <用户名>`），只是取值来源改了；附带拒绝含引号或换行的用户名。`TestParseFlagsReadsAutostartOwner`、`TestAutostartHandoffLaunchesOneShotHelper` 覆盖传递链路。
-- `待实机验证` 跨账户 UAC 至少需要两个账户和另一个账户的密码，本机只有一个账户，无法复现。本机实测附带结论：非提权会话下 `schtasks /Create` 直接返回「拒绝访问」，不带 `/RU` 也一样，所以提权助手必须保持提权运行，无法在非提权下验证任务创建。本机已有真实的 `sing-box-drover` 任务，验证用的是临时任务名且未创建成功，未触碰真实任务。
-- `设计待决定` 固定任务名 `sing-box-drover` 仍是机器级资源，没有按用户隔离：不同 Windows 用户各自启用自启会互相覆盖或删除彼此的任务。改动前先弄清迁移陷阱：改成按用户命名后，旧任务名的注册既不会被 `QueryAutostart` 看到，也不会被 `SetAutostart(false)` 删除，可能出现「关不掉」以及登录时重复注册；需要先决定是读取任务 XML 的 `<Principal><UserId>` 来接管旧任务，还是保留固定名字但拒绝修改属于其他用户的任务。
-- `已完成` Task Scheduler 查询、创建和删除现在使用 10 秒超时；任务计划服务异常时不会无限阻塞启动流程或托盘菜单。
-- `已完成` Task Scheduler 的 `/XML` 输出现在同时支持原始 UTF-16（含 BOM 或无 BOM），以及字节流已转换但声明仍为 `UTF-16` 的 Windows 输出；自启验证不会再因 `Decoder.CharsetReader is nil` 失败。
-- `已完成` 自启状态查询改用任务计划程序 XML 的 `Settings/Enabled` 字段；任务存在但被禁用时不再误报为已启用，关闭自启时始终执行幂等删除以清理这类任务。
-- `待实机验证` 仍需在真实 Windows 用户登录时确认任务以普通权限启动、TUN 开启场景只在需要时弹出 UAC，并确认已有旧的 `HIGHEST` 任务能够被更新为 `LIMITED`。
+- `已完成` 轻量跨平台托盘控制器，使用用户自带的外置 `sing-box`/`sing-box.exe` 和原生配置；不内置内核，不做订阅管理、配置编辑和流量统计。
+- `已完成` 托盘负责单实例、内核启停重启、状态显示、Homepage 和系统集成。Windows 用原生 Win32 消息循环和通知区域图标；macOS 用 `fyne.io/systray` 的原生 Objective-C/AppKit 状态栏，不引入 Electron、WebView 或大型 UI 框架。
+- `已完成` 通过运行中内核的 Clash API 读取 Selector，用 `PUT /proxies/<selector>` 切换节点；provider 展开的节点、国旗和当前选择显示在托盘菜单。
+- `已完成` 静态 Selector 缓存遵循 sing-box 的默认值：配置省略 `default` 时勾选 `outbounds` 第一项，显式默认值原样保留。
+- `已完成` Selector 刷新和切换尊重调用方上下文取消；取消后返回的过期响应不写入缓存，nil context 归一化为后台上下文。
+- `待实机验证` 读取运行中 `URLTest.now`，在自动选择组的当前选项后显示实际落点；落点只用于显示，不新增手动切换入口。
+- `已完成` Selector 菜单保留 Windows 原生勾选样式，并处理勾选标记与节点旗帜重叠；菜单布局不再扩展。
+- `已完成` Homepage 支持配置 `http://` 或 `https://` 地址，未配置时指向本项目仓库。
+- `已完成` 单击托盘切换 Windows 系统代理，Shift 单击切换 TUN。
+- `已完成` TUN 支持按配置启动；普通权限进程需要 TUN 时经 UAC 提权并交接给新的托盘实例。
+- `待实机验证` 自启使用固定任务名 `sing-box-drover`；同一 Windows 用户下 A、B 版本启用自启时后一次以 `/F` 覆盖，开机只会启动后一次设置的版本。
+- `已完成` 自启任务用 `/RL LIMITED` 以当前用户权限启动，需要 TUN 时仍走按需 UAC；改任务由提权后的替代进程完成，非 TUN 场景不长期运行管理员托盘。
+- `已完成` 自启更新改为一次性提权助手：`-autostart-enable`/`-autostart-disable` 在 `NewAt` 里、取单实例和读配置之前处理，返回 `ErrAutostartHandled`，不接管控制器、不启动内核、不建托盘就退出；`LaunchAutostartElevated` 不再传 `-restart`、不带 TUN 状态、不做系统代理交接（助手不启动内核，交出去没人恢复代理）。附带变化：自启更新不再做配置预检。
+- `待实机验证` 普通权限勾选「Start with Windows」，UAC 通过后确认原托盘继续运行且任务管理器中仍是非管理员、任务注册成功；拒绝 UAC 时原托盘保留并提示。
+- `已完成` 自启任务的账户身份取自发起操作的账户：托盘提权前用 `-autostart-owner` 把账户名传给助手，助手据此调用 `SetAutostart(enabled, owner)`，为空时才回落 `user.Current()`；跨账户 UAC 不再把任务注册给凭据账户，并拒绝含引号或换行的用户名。
+- `待实机验证` 跨账户 UAC 需要第二个账户，本机只有一个，无法复现。附带实测：非提权会话下 `schtasks /Create` 直接返回「拒绝访问」（不带 `/RU` 也一样），所以提权助手必须保持提权运行。
+- `设计待决定` 固定任务名是机器级资源、未按用户隔离，不同 Windows 用户各自启用会互相覆盖或删除。迁移陷阱：改成按用户命名后，旧任务名的注册既不被 `QueryAutostart` 看到、也不被 `SetAutostart(false)` 删除，会出现「关不掉」和登录时重复注册；需在「读任务 XML 的 `<Principal><UserId>` 接管旧任务」与「保留固定名字但拒绝修改其他用户的任务」之间选择。
+- `已完成` Task Scheduler 的查询、创建和删除使用 10 秒超时。
+- `已完成` Task Scheduler 的 `/XML` 输出支持原始 UTF-16（含或不含 BOM）以及字节流已转换但声明仍为 `UTF-16` 的输出，自启验证不再因 `Decoder.CharsetReader is nil` 失败。
+- `已完成` 自启状态查任务 XML 的 `Settings/Enabled`，任务存在但被禁用时不再误报为已启用；关闭自启始终执行幂等删除。
+- `待实机验证` 确认真实登录后任务以普通权限启动、TUN 场景只在需要时弹出 UAC，以及已有旧的 `HIGHEST` 任务能被更新为 `LIMITED`。
 - `已完成` macOS 状态栏菜单支持系统代理、TUN、Selector、重启、Homepage、登录启动和退出，并定期同步 Clash API 首次展开的 provider 节点。
-- `已完成` macOS 系统代理通过 `networksetup` 修改当前默认网络服务的 HTTP、HTTPS、SOCKS、PAC、自动发现和绕过列表；普通权限实例会按需交接给管理员实例，外部修改代理后恢复流程会放弃覆盖，恢复比较会忽略关闭状态的端点残留值。
-- `已完成` macOS 单实例使用 `flock`，提权交接会把原用户锁文件路径传给 root 实例，避免普通权限与管理员权限实例同时运行。
-- `已完成` macOS 系统代理和 TUN 交接共用 `osascript ... with administrator privileges` 启动替代实例；普通启动使用独立 session，避免终端退出后中断控制器。
-- `已完成` macOS 登录启动写入 `~/Library/LaunchAgents/com.moxuun.sing-box-drover.plist`；管理员权限实例拒绝写入 root 用户的 LaunchAgent。
+- `已完成` macOS 系统代理用 `networksetup` 修改当前默认网络服务的 HTTP、HTTPS、SOCKS、PAC、自动发现和绕过列表；普通权限实例按需交接管理员实例，外部修改后放弃覆盖，比较时忽略关闭状态的端点残留。
+- `已完成` macOS 单实例使用 `flock`，提权交接把原用户锁文件路径传给 root 实例。
+- `已完成` macOS 代理和 TUN 交接共用 `osascript ... with administrator privileges`；普通启动使用独立 session，避免终端退出中断控制器。
+- `已完成` macOS 登录启动写 `~/Library/LaunchAgents/com.moxuun.sing-box-drover.plist`；管理员实例拒绝写 root 的 LaunchAgent。
 - `已完成` macOS 监听 `NSWorkspaceDidWakeNotification`，唤醒后复用 `RecoverAfterResume` 检查内核与 Clash API。
-- `已完成` macOS `.app` 使用 `LSUIElement` 隐藏 Dock 图标；默认构建 arm64 + x86_64 Universal 二进制，固定 `minos`/`LSMinimumSystemVersion` 为 macOS 12.0，删除各架构中间文件后再执行 ad-hoc 签名，避免签名后资源缺失。
-- `已完成` 2026-09-30 在 macOS 27.0.1 arm64 上使用本地构建和 sing-box 1.13.4 完成普通权限启动验证：`.app`、外置内核、Clash API 和状态菜单均可正常运行，验证时明确关闭了系统代理和 TUN。
-- `待实机验证` 仍需要在真实 macOS 用户会话中确认系统代理授权、LaunchAgent 登录启动、管理员 TUN 托盘、睡眠唤醒和真实 sing-box 配置的完整生命周期。
+- `已完成` macOS `.app` 用 `LSUIElement` 隐藏 Dock 图标；默认构建 arm64 + x86_64 Universal，最低系统版本固定 macOS 12.0，删中间文件后执行 ad-hoc 签名。
+- `已完成` 2026-09-30 在 macOS 27.0.1 arm64 上用 sing-box 1.13.4 完成普通权限启动验证（验证时关闭系统代理和 TUN）。
+- `待实机验证` 真实 macOS 用户会话中确认系统代理授权、LaunchAgent 登录启动、管理员 TUN 托盘、睡眠唤醒和真实配置的完整生命周期。
 
 ### 内核与配置边界
 
-- `已完成` 控制器读取原始 sing-box JSON，通过标准输入把运行时 JSON 交给内核，不直接改写用户的配置文件。
-- `已完成` TUN 开关只生成内存中的带 TUN/不带 TUN 运行变体；配置文件、DNS、路由和出站规则仍由用户的 sing-box 配置决定。
-- `已完成` 控制器预检会拒绝超出 TCP 端口范围的 `mixed.listen_port`，避免非法端口先通过启动检查、直到系统代理写入时才失败。
-- `已完成` 控制器预检和 Windows 系统代理入口会拒绝纯空白或包含 NUL 的 `mixed.listen` 地址，避免把不可用地址交给 WinINet。
-- `已完成` JSON-with-comments 读取会拒绝未闭合块注释、连续逗号和根对象外的尾逗号，不再静默截断无效尾部内容；对象或数组内部的单个尾逗号仍保持兼容。
-- `已完成` 已移除旧的 BPF 工作流和控制器自有的 Selector 状态文件，节点记忆优先交给 sing-box 本身以及运行中的 Clash API。
-- `已完成` INI 布尔选项统一以 `on/off` 为规范形式，同时保留原有可接受的 `0/1` 输入，并对未知值给出明确错误。
-- `设计待决定` 当配置存在 Selector 但没有 Clash API 时，当前代码仍可能注入回环地址 `127.0.0.1:9090` 和随机 secret；需要由项目所有者决定是否删除这类隐式运行时修改。
-- `设计待决定` 项目目标是“裸核 + 原生配置决定代理行为，托盘只做 Windows 集成和 Clash API 控制”；后续新增功能必须先证明属于这个边界，不能因为上游存在就默认加入。
+- `已完成` 读原始 sing-box JSON，经标准输入把运行时 JSON 交给内核，不改写用户配置文件。
+- `已完成` TUN 开关只生成内存中的带 TUN/不带 TUN 变体；配置、DNS、路由和出站规则仍由用户配置决定。
+- `已完成` 预检拒绝超出 TCP 端口范围的 `mixed.listen_port`。
+- `已完成` 预检和 Windows 系统代理入口拒绝纯空白或含 NUL 的 `mixed.listen`。
+- `已完成` JSON-with-comments 拒绝未闭合块注释、连续逗号和根对象外的尾逗号；对象或数组内的单个尾逗号仍兼容。
+- `已完成` 已移除旧的 BPF 工作流和控制器自有的 Selector 状态文件，节点记忆交给 sing-box 和运行中的 Clash API。
+- `已完成` INI 布尔选项统一 `on/off`，兼容 `0/1`，未知值报明确错误。
+- `设计待决定` 有 Selector 但没有 Clash API 时仍会注入 `127.0.0.1:9090` 和随机 secret；是否删除这类隐式修改由所有者决定。
+- `设计待决定` 目标是「裸核 + 原生配置决定代理行为，托盘只做 Windows 集成和 Clash API 控制」；新功能必须先证明属于这个边界。
 
 ### 生命周期与故障处理
 
-- `已完成` `WM_QUERYENDSESSION` 只回答是否允许结束会话（返回 TRUE），不再关闭控制器；只有确认收到 `WM_ENDSESSION` 且 `wParam != 0` 时才执行关闭。取消关机或注销后托盘、内核和系统代理都保持可用。
-- `待实机验证` 需要在真实环境确认：发起注销或关机后取消，托盘仍能切换代理、重启内核和退出。
-- `已完成` 修复内核启动 750ms 计时器与退出协程的竞态：状态发布统一由 `publishState` 在 `publishMu` 下完成，`promoteToRunning` 只在代次未变、进程仍在、状态仍为 Starting 时才发布 Running。已退出的内核不会再被标记为运行中，也就不会开启指向已退出内核的系统代理。
-- `已完成` 用真机进程复现了该竞态：临时复现台用一个假 `sing-box.exe`（读掉 stdin、睡到指定毫秒后 `exit 3`）驱动真实 `core.Supervisor`，扫描 750ms 宽限期边界。真实窗口在「发布终态 → 通知 Start 协程」之间，只有亚微秒级：未改动的代码扫描 144 次 0 次违规，即这个交错难以在实机自然命中。把该窗口人为拉宽到 10ms 后，修复前 22/168 次违规（事件序列 `starting -> failed -> running`，且 `Start` 返回 nil），修复后 0/168。复现台建在临时目录，未进入仓库。
-- `待实机验证` 仍需在真实 Windows 托盘层面确认最终显示：让内核在宽限期内失败（例如配置错误），确认托盘落到失败/停止而不是运行中，且系统代理保持关闭。
-- `已完成` 替换实例的等待预算不再固定为 10 秒，而是由 `core.StopGracePeriod` + `core.StopCleanupWait` + 5 秒余量导出，覆盖旧实例完整关闭预算；交接超时也不再作为普通重复启动静默退出，而是返回 `ErrRestartHandoff` 并提示用户重新启动。
-- `待实机验证` 需要在真实环境确认：在旧实例需要走满优雅停止窗口时点击重启内核，确认新实例能完成交接而不是两边都退出。
-- `已完成` 替代进程交接现在总是传递显式的功能状态：新增 `-no-tun` / `-no-proxy`，与原有的 `-tun` / `-proxy` 成对，三个交接调用点统一用 `handoffTunFlags` / `handoffProxyFlags` 传当前状态，`startupTunRequested` / `startupProxyRequested` 让显式关闭优先于 INI 的 `tun-start-mode` / `system-proxy-auto`。托盘的代理启动条件不再自行重算，改问 `App.StartupProxyRequested()`，这条判断原本散落在三处。`TestRestartHandoffPreservesFeatureState` 覆盖四种组合；把 guard 去掉后「用户关掉的功能保持关闭」一例会变红。
-- `待实机验证` 需要在真实托盘确认：INI 里 `tun-start-mode` / `system-proxy-auto` 为 on，手动关掉后点「重启内核」，重启后应仍是关闭状态；提权交接（开 TUN、改自启）后同样保持。
-- `已完成` 睡眠恢复不再把 Clash API 客户端自身的请求超时当作恢复上下文结束：Clash 客户端有 1 秒请求超时，超时错误会包裹 `context.DeadlineExceeded`，无法与恢复预算用尽区分。新增 `resumeProbeEndedRecovery` 只判断调用方 `ctx.Err()`，因此连续 API 超时后仍会重启失效内核，只有恢复上下文真的结束才提前返回。新增 `TestResumeProbeEndedRecovery` 固定该判断。
-- `待实机验证` 需要在真实睡眠唤醒后确认：内核唤醒后 API 持续无响应（例如内核假死），控制器最终重启内核并恢复选择器，而不是直接返回错误。
-
-- `已完成` 内核由控制器拥有并监控，启动时收集有上限的标准输出/错误输出，异常退出时报告 `FATAL` 等立即诊断信息。
-- `已完成` Windows 优雅关闭信号发送失败时不再无谓等待完整 10 秒，而是立即走 Job Object/进程强制清理；信号发送成功时仍保留原有优雅等待窗口。
-- `已完成` 停止内核前先尝试优雅关闭，并通过 Windows Job Object 等机制减少孤儿进程；内核失败或被外部正常停止时都会清理由控制器开启的系统代理状态。
-- `已完成` 重启、TUN 切换和睡眠恢复重启前会重新读取配置，先完成控制器侧的 JSON 与必要字段检查，再把将要启动的完整运行时 JSON 通过标准输入交给外置内核执行 `sing-box check -c stdin`；检查失败时保留当前配置状态和运行中的旧内核。
-- `已完成` 同进程重启或 TUN 切换会先恢复由控制器接管的系统代理，内核成功启动后再按当前配置重新启用；即使 mixed 入站地址未变，也不会让系统代理在旧内核停止期间继续指向已停止的进程。
-- `已完成` 睡眠恢复的 Clash API 探测会在请求前后检查取消状态；即使兼容内核或自定义 HTTP 传输在取消后仍返回成功，也不会继续执行恢复重启。
-- `已完成` 受保护的实机测试已使用项目当前外置 `sing-box.exe` 验证原生检查能够接受合法配置、拒绝 JSON 合法但语义非法的配置，并确认当前真实配置的 TUN/非 TUN 两种运行时变体均通过检查。
-- `已完成` 控制器进入关闭状态后，选择器切换、TUN 切换、重启和提权交接都会拒绝后续操作，避免关闭过程中的并发回调再次访问 API 或启动替代进程。
-- `待实机验证` 仍需保持旧内核运行，现场写入一份语义错误配置后分别点击“重启内核”和切换 TUN，确认托盘错误提示清晰且旧 PID、代理连接和选择器状态不受影响。
-- `已完成` 为缓解托盘进程多次重启后的堆高水位，重启操作改为启动新的托盘进程并交接互斥体和 TUN 参数，再退出旧进程；Selector 状态继续由运行中 API 和 sing-box 缓存恢复。
-- `待实机验证` 进程交接已经通过自动测试和 Windows 构建检查，但仍需实际连续点击“重启内核”，同时观察 PID、内存、句柄、GDI/USER 资源以及节点/TUN 状态。
-- `已完成` 睡眠唤醒后会重新注册通知区域图标，并检查内核和 Clash API 状态；如果恢复链路判断为失效，会尝试恢复服务。
-- `待实机验证` 睡眠/唤醒恢复和恢复后 Web/API 可用性尚未用真实 Windows 睡眠周期确认，不能只凭测试或重启成功宣布完成。
-- `已完成` 内核处于 Running 且 API 曾经就绪时，唤醒后的 `/proxies` 访问现在最多重试 5 次、间隔 750ms；短暂恢复延迟不会立即重启内核，只有连续探测失败才进入原有配置预检和重启路径，同一时间重复的唤醒事件也只会启动一次恢复。
-- `已完成` 托盘唤醒恢复总超时调整为 10 秒，覆盖 5 次、每次最多 1 秒并间隔 750ms 的完整探测预算，不会在最后一次探测前提前放弃恢复流程。
-- `已完成` 唤醒恢复收到取消或超时后会立即结束，不再把上下文结束误判为 API 故障并继续重启内核。
-- `待实机验证` 仍需在真实睡眠/唤醒周期中观察 API 短暂不可用、内核真实退出和托盘提示，确认重试窗口覆盖实际恢复时间且不会掩盖真正故障。
+- `已完成` `WM_QUERYENDSESSION` 只返回 TRUE，不关闭控制器；只有收到 `WM_ENDSESSION` 且 `wParam != 0` 才关闭。取消关机或注销后托盘、内核和系统代理都可用。
+- `待实机验证` 发起注销或关机后取消，确认托盘仍能切换代理、重启内核和退出。
+- `已完成` 修掉启动 750ms 计时器与退出协程的竞态：状态发布统一在 `publishMu` 下完成，`promoteToRunning` 只在代次未变、进程仍在、状态仍为 Starting 时发布 Running；已退出的内核不会被标记为运行中，也就不会为它开启系统代理。
+- `已完成` 该竞态已用真机复现台确认（假 `sing-box.exe` 驱动真实 `core.Supervisor`，扫 750ms 宽限边界）：真实窗口只有亚微秒级，未改动代码扫 144 次 0 违规；把窗口人为拉宽到 10ms 后，修复前 22/168 违规（`starting -> failed -> running` 且 `Start` 返回 nil），修复后 0/168。复现台在临时目录，未进入仓库。
+- `待实机验证` 让内核在宽限期内失败（例如配置错误），确认真实托盘落到失败/停止而不是运行中，且系统代理保持关闭。
+- `已完成` 替换实例的等待预算由 `core.StopGracePeriod` + `core.StopCleanupWait` + 5 秒余量导出，覆盖旧实例的完整关闭预算；交接超时返回 `ErrRestartHandoff` 提示用户重新启动，不再静默退出。
+- `待实机验证` 旧实例需要走满优雅停止窗口时点「重启内核」，确认新实例能完成交接而不是两边都退出。
+- `已完成` 交接总是传递显式的功能状态：`-no-tun`/`-no-proxy` 与 `-tun`/`-proxy` 成对，三个交接调用点统一用 `handoffTunFlags`/`handoffProxyFlags`，`startupTunRequested`/`startupProxyRequested` 让显式关闭优先于 INI 的 `tun-start-mode`/`system-proxy-auto`；托盘的代理启动条件改问 `App.StartupProxyRequested()`。
+- `待实机验证` INI 里 `tun-start-mode`/`system-proxy-auto` 为 on、手动关掉后点「重启内核」，确认重启后仍是关闭状态；提权交接后同样保持。
+- `已完成` 睡眠恢复不再把 Clash 客户端自身的 1 秒请求超时当成恢复上下文结束（该错误包裹 `context.DeadlineExceeded`）；`resumeProbeEndedRecovery` 改为只判断调用方 `ctx.Err()`，连续 API 超时后仍会重启失效内核。
+- `待实机验证` 唤醒后内核 API 持续无响应（内核假死）时，确认控制器最终重启内核并恢复选择器，而不是直接返回错误。
+- `已完成` 内核由控制器拥有并监控，启动时收集有上限的标准输出/错误输出，异常退出时报告 `FATAL` 等诊断信息。
+- `已完成` 停止内核前先尝试优雅关闭，用 Windows Job Object 等机制减少孤儿进程；优雅关闭信号发送失败时不再白等 10 秒，立即走强制清理。内核失败或被外部正常停止时清理控制器开启的系统代理状态。
+- `已完成` 重启、TUN 切换和睡眠恢复重启前重读配置，先在控制器侧检查 JSON 和必要字段，再交给外置内核执行 `sing-box check -c stdin`；失败时保留当前配置状态和运行中的旧内核。
+- `已完成` 同进程重启或 TUN 切换会先恢复由控制器接管的系统代理，内核起来后再按当前配置重新启用，不让代理在旧内核停止期间指向已停止的进程。
+- `已完成` 睡眠恢复的 Clash API 探测在请求前后检查取消状态，取消后仍返回成功也不会继续执行恢复重启。
+- `已完成` 受保护实机测试已用当前外置 `sing-box.exe` 验证原生检查接受合法配置、拒绝 JSON 合法但语义非法的配置，当前真实配置的 TUN/非 TUN 变体都通过。
+- `已完成` 进入关闭状态后，选择器切换、TUN 切换、重启和提权交接都拒绝后续操作。
+- `待实机验证` 保持旧内核运行时现场写入一份语义错误配置，分别点击「重启内核」和切换 TUN，确认提示清晰且旧 PID、代理连接和选择器状态不受影响。
+- `已完成` 重启改为启动新托盘进程并交接互斥体和 TUN 参数，再退出旧进程，缓解多次重启后的堆高水位；Selector 状态仍由运行中 API 和 sing-box 缓存恢复。
+- `待实机验证` 连续点击「重启内核」，观察 PID、内存、句柄、GDI/USER 资源以及节点/TUN 状态。
+- `已完成` 睡眠唤醒后重新注册通知区域图标并检查内核和 Clash API，失效时尝试恢复服务。Running 且 API 曾经就绪时，唤醒后 `/proxies` 最多重试 5 次、间隔 750ms、总超时 10 秒，只有连续失败才进入配置预检和重启路径，重复唤醒只启动一次恢复；收到取消或超时立即结束，不再误判为 API 故障。
+- `待实机验证` 真实睡眠/唤醒周期中观察 API 短暂不可用、内核真实退出和托盘提示，确认重试窗口覆盖实际恢复时间且不掩盖真正故障。
 
 ### Windows 代理与 Discord 问题
 
-- `已完成` 本地协作规范 `AGENTS.md` 已精简为 BUG 修复与维护规则，删除开发阶段的重复说明和功能规划，保留配置/权限/生命周期边界、正式构建要求、验证与文档同步要求。系统代理、退出及重启等行为先参考成熟代理客户端，优先核对官方 sing-box；不凭直觉判定 BUG，不为假设场景增加恢复或归属逻辑，也不强制保留原代理保护策略。此次仅更新规范，未修改运行时代码。
-
-- `设计待决定` 维护者要求系统代理策略以官方 Windows 客户端为依据，不再添加推测性的恢复逻辑。已从官方 Desktop 文档追踪到 `sing-box-for-desktop`，并核对 sing-box 提交 `927770c29f3e3698c711fc150e1066a4a78793a2` 的 `experimental/boxdd/platform_windows.go`、`common/settings/proxy_windows.go` 及其依赖 sing 提交 `6f21f2425a95` 的 `common/wininet/wininet_windows.go`：已启用的代理在关闭时调用 `ClearSystemProxy`，仅将 flags 设为 `DIRECT | AUTO_DETECT`，不恢复旧代理快照、不检查当前设置是否被其他软件改过；服务器、bypass 和 PAC 字符串不清空，但手动代理和显式 PAC 标志关闭。完全对齐会移除本项目“外部改动后不覆盖”的既有行为；协作规范已调整为参考成熟客户端，不再强制该保护，运行时实现尚未调整，也未做实机验证。来源：[官方 Desktop 文档](https://sing-box.sagernet.org/clients/desktop/)、[Windows 平台调用](https://github.com/SagerNet/sing-box/blob/927770c29f3e3698c711fc150e1066a4a78793a2/experimental/boxdd/platform_windows.go)、[底层 WinINet 实现](https://github.com/SagerNet/sing/blob/6f21f2425a95/common/wininet/wininet_windows.go)。
-
-- `设计待决定` 已核对成熟客户端公开分支源码：v2rayN 的 `AppExitAsync` 调用 `UpdateSysProxy(config, true)`，除 Unchanged 模式外转 ForcedClear，Windows `UnsetProxy()` 设置 DIRECT；Clash Verge Rev 的 `update_sysproxy` 关闭分支和 `reset_sysproxy` 将全局代理与 PAC 关闭，并非恢复接管前快照。因此“退出必须恢复旧代理”不是通用正确标准，恢复失效旧端口也可能导致断网；本项目清理与恢复策略需单独决定，本次仅研究、不修改代理实现。来源：[v2rayN SysProxyHandler](https://github.com/2dust/v2rayN/blob/master/v2rayN/ServiceLib/Handler/SysProxy/SysProxyHandler.cs)、[AppManager](https://github.com/2dust/v2rayN/blob/master/v2rayN/ServiceLib/Manager/AppManager.cs)、[ProxySettingWindows](https://github.com/2dust/v2rayN/blob/master/v2rayN/ServiceLib/Handler/SysProxy/ProxySettingWindows.cs)、[Clash Verge Rev sysopt](https://github.com/clash-verge-rev/clash-verge-rev/blob/main/src-tauri/src/core/sysopt.rs)。结论仅针对本次读取的分支实现，非所有发行版本的实机验证。
-
-- `已完成` 修复残留代理识别只比较主机、不比较端口的问题：`restoreTarget` 与 `proxyAddressMatch` 现在要求完整的 `host:port` 与本次写入的地址一致，才认定原状态是本程序自己的残留。用户原有的其他 `127.0.0.1:<port>` 本地代理不再被误认，关闭代理或退出时会原样恢复；原先把同主机不同端口判为匹配的测试已改为拒绝。已知残留：用户改了配置里的 mixed 监听端口后，上一轮留下的旧端口代理不再被识别，那个场景仍会回写残留状态，本轮未处理。
-- `已完成` 关闭系统代理改为对齐官方 Windows 客户端：`RestoreSystemProxy` 只写 WinINet 的 flags 一项，值为 `DIRECT | AUTO_DETECT`，手动代理和显式 PAC 标志被关掉，服务器、bypass 和 PAC 字符串保持原样；不再恢复接管前的快照，也不再检查当前设置是否被其他程序改过。`restoreTarget`、`proxyHostsMatch`/`proxyAddressMatch`、`proxySettingsEqual` 随之删除，`ProxySession` 在 Windows 上不再携带状态（macOS 仍记录旧配置）。
-- `已完成` 上一条的实机验证（本机注册表往返）：开启后读回 `flags=0x3 server="http://127.0.0.1:10808" bypass="<local>" pac=""`，清空后读回 `flags=0x9` 且三个字符串完全不变，测试结束后注册表与测试前逐项一致。原先按旧前提写的两次修复已用 `git revert` 撤销（`e94d2a8` 撤销 `c556bb9`、`5006ffb` 撤销 `015777e`）。
-- `已完成` 行为变更（已知且有意）：用户自有的其他代理（例如先由其他程序设为 `127.0.0.1:7890`）在本程序开启再关闭后也会被关闭，而不是被恢复；这是官方客户端 `ClearSystemProxy` 的既有行为，不再当作缺陷处理，也不要再加回恢复或归属判断逻辑。
-
-- `已完成` 已定位旧系统代理写法同时写入 `http`、`https`、`socks` 映射，可能让 Discord 的 WSS 连接走不同的 SOCKS 路径，导致关闭 TUN 时无法正常进入。
-- `待实机验证` 已将系统代理写法收敛为单一 HTTP 代理，并补发 WinInet 代理设置变更通知；这不删除 mixed 入站的 SOCKS 能力，但需要退出旧托盘、重新启动 Discord 后在真实环境验证。
-- `已完成` 启用系统代理前仍会读取 WinINet 的代理标志、服务器、bypass 和 PAC 地址，用它作为写入基准，因此本程序不理解的标志和字符串在开启期间保持原值；写入后的校验失败仍会回滚（见下一条）。关闭不再走恢复路径，也不再判断当前值是否等于自己写入的值。
-- `已完成` 系统代理写入后的验证失败会继续尝试回滚，并把回滚失败与验证错误一起向上报告，不再静默丢失可能残留的代理状态。
-- `已完成` 手动开启与自动开启的系统代理使用同一所有权生命周期；正常退出、内核失败、托盘重启、TUN 提权和开机启动提权都会恢复或交接代理状态，新进程启动失败时原进程会重新接管。
-- `已完成` 系统代理接管入口现在要求 sing-box 内核处于 `Running`；启动失败、停止或恢复中的内核不会重新把系统代理指向失效端口，重启成功后的内部恢复仍按启动结果执行。
-- `已完成` 托盘退出现在会向主流程传递系统代理恢复错误；清理失败不再静默吞掉，主程序可以显示诊断信息。
-- `已完成` 修复 mixed 入站监听 `0.0.0.0`/`::` 时系统代理被指向不可达地址的问题。此前 `ProxyHost` 直接取配置里的 `listen` 原值，通配监听会被写成 `http://[::]:7890`，Windows 显示代理已开启但客户端连不上「未指定地址」，看起来像开关反了；配置里写 `[::]` 还会被 `net.JoinHostPort` 二次加括号成 `http://[[::]]:7890`。`ReadSingBoxConfig` 现在用 `clientHost` 把通配地址（`0.0.0.0`、`::`、`*`、`[::]`）折算成 `127.0.0.1`，并剥掉 `listen` 自带的中括号；指向具体地址的配置（含 `::1`、`localhost`）不受影响。
-- `待实机验证` 上述折算需要真实环境确认：把配置改成 `"listen": "::"`，开启系统代理后确认能正常上网，并确认注册表 `ProxyServer` 写的是 `http://127.0.0.1:<port>` 而不是 `http://[::]:<port>`。
-- `设计待决定` sing-box 自身的 `set_system_proxy: true` 会在内核启停时写入和清除系统代理，与托盘开关构成双重所有权，托盘关闭可能被内核重新改写而表现为「开关无效」。是否检测该字段并在托盘提示用户改为 `false` 尚未决定。
-- `待实机验证` 仍需在真实托盘中分别验证手动代理、PAC/自动检测原状态、退出、连续重启、TUN UAC 交接和用户中途修改代理等完整交互；自动往返测试不能替代这些多进程与 UI 场景。
-- `已完成` Wireshark、Windows 代理注册表和 sing-box 日志可分别用于确认客户端代理协议、DNS/直连路径和内核内部路由，后续网络问题优先按这条证据链排查。
+- `已完成` 本地协作规范 `AGENTS.md` 已精简为 BUG 修复与维护规则；代理、退出和重启行为先参考成熟客户端、优先核对官方 sing-box，不为假设场景增加恢复或归属逻辑，也不强制保留原代理保护策略。
+- `已完成` 代理策略以官方 Windows 客户端为依据：sing-box 提交 `927770c29f3e3698c711fc150e1066a4a78793a2` 的 `experimental/boxdd/platform_windows.go`、`common/settings/proxy_windows.go`，sing 提交 `6f21f2425a95` 的 `common/wininet/wininet_windows.go`。关闭时 `ClearSystemProxy` 只把 flags 设为 `DIRECT | AUTO_DETECT`，不恢复旧快照、不检查当前设置是否被其他软件改过；服务器、bypass 和 PAC 字符串不清空，手动代理和显式 PAC 标志关闭。
+- `已完成` 成熟客户端同样不恢复接管前的快照：v2rayN 的 `AppExitAsync` 走 ForcedClear，Windows `UnsetProxy()` 设置 DIRECT；Clash Verge Rev 的关闭分支和 `reset_sysproxy` 关闭全局代理与 PAC。所以「退出必须恢复旧代理」不是通用正确标准，恢复失效旧端口还可能导致断网。来源：[官方 Desktop 文档](https://sing-box.sagernet.org/clients/desktop/)、[Windows 平台调用](https://github.com/SagerNet/sing-box/blob/927770c29f3e3698c711fc150e1066a4a78793a2/experimental/boxdd/platform_windows.go)、[底层 WinINet 实现](https://github.com/SagerNet/sing/blob/6f21f2425a95/common/wininet/wininet_windows.go)、[v2rayN SysProxyHandler](https://github.com/2dust/v2rayN/blob/master/v2rayN/ServiceLib/Handler/SysProxy/SysProxyHandler.cs)、[AppManager](https://github.com/2dust/v2rayN/blob/master/v2rayN/ServiceLib/Manager/AppManager.cs)、[ProxySettingWindows](https://github.com/2dust/v2rayN/blob/master/v2rayN/ServiceLib/Handler/SysProxy/ProxySettingWindows.cs)、[Clash Verge Rev sysopt](https://github.com/clash-verge-rev/clash-verge-rev/blob/main/src-tauri/src/core/sysopt.rs)。结论仅针对本次读取的分支实现。
+- `已完成` 关闭系统代理已按该结论实现：`RestoreSystemProxy` 只写 WinINet 的 flags 一项（`DIRECT | AUTO_DETECT`），不恢复快照、不比较当前值；`restoreTarget`、`proxyHostsMatch`/`proxyAddressMatch`、`proxySettingsEqual` 已删除，`ProxySession` 在 Windows 上不再携带状态（macOS 仍记录旧配置，`networksetup` 没有等价的单项清空）。
+- `已完成` 上一条的实机验证（本机注册表往返）：开启后读回 `flags=0x3 server="http://127.0.0.1:10808" bypass="<local>" pac=""`，清空后读回 `flags=0x9` 且三个字符串完全不变，结束后注册表与测试前逐项一致。此前按旧前提写的两次修复已用 `git revert` 撤销（`e94d2a8`、`5006ffb`）。
+- `已完成` 有意保留的行为变更：用户自有的其他代理（例如先由其他程序设为 `127.0.0.1:7890`）在本程序开启再关闭后也会被关闭，而不是被恢复。这是官方客户端的既有行为，不要再加回恢复或归属判断逻辑。
+- `已完成` 旧系统代理写法曾同时写入 `http`、`https`、`socks` 映射，可能让 Discord 的 WSS 连接走不同的 SOCKS 路径；现已收敛为单一 HTTP 代理并补发 WinInet 代理设置变更通知，mixed 入站的 SOCKS 能力保留。
+- `待实机验证` 退出旧托盘、重新启动 Discord 后确认 WSS 连接正常。
+- `已完成` 开启前仍会读取现有的标志、服务器、bypass 和 PAC 作为写入基准，本程序不理解的标志和字符串在开启期间保持原值；写入后的校验失败会回滚，并把回滚失败与验证错误一起向上报告。
+- `已完成` 手动开启与自动开启共用同一所有权生命周期：退出、内核失败、托盘重启、TUN 提权和开机启动提权都会恢复或交接代理状态，新进程启动失败时原进程重新接管。接管入口要求内核处于 `Running`；退出时把恢复错误传给主流程以便显示诊断。
+- `已完成` mixed 入站监听通配地址时不再把系统代理指向不可达地址：`ReadSingBoxConfig` 用 `clientHost` 把 `0.0.0.0`、`::`、`*`、`[::]` 折算成 `127.0.0.1` 并剥掉 `listen` 自带的中括号；指向具体地址的配置（含 `::1`、`localhost`）不受影响。
+- `待实机验证` 把配置改成 `"listen": "::"`，开启系统代理后确认能正常上网，且注册表 `ProxyServer` 写的是 `http://127.0.0.1:<port>`。
+- `设计待决定` sing-box 自身的 `set_system_proxy: true` 会在内核启停时写入和清除系统代理，与托盘开关构成双重所有权，托盘关闭可能被内核重新改写而表现为「开关无效」；是否检测该字段并在托盘提示用户改为 `false` 尚未决定。
+- `待实机验证` 手动代理、PAC/自动检测原状态、退出、连续重启、TUN UAC 交接和用户中途修改代理等完整交互仍需在真实托盘中验证。
+- `已完成` 网络问题优先按 Wireshark、Windows 代理注册表和 sing-box 日志这条证据链排查。
 
 ### 托盘外观与构建发布
 
-- `已完成` 托盘图标已嵌入正式 Windows 构建，状态区分未运行、代理/TUN 工作中和故障，并在 tooltip 中显示当前模式。
-- `已完成` 内核进入 `Stopped` 后托盘状态优先显示“未运行”，不会因为仍保留的 TUN/代理期望状态而继续显示绿色工作中；启动和重启过渡态仍保留原有提示。
-- `已完成` Homepage 调用现在检查 URL 编码和 `ShellExecuteW` 返回值；浏览器启动失败会在托盘显示错误，不再静默丢失点击结果。
-- `已完成` 托盘窗口类现在记录注册所有权；窗口创建失败或关闭时只注销本进程实际注册的类，避免失败路径残留或误注销同名类。
-- `已完成` 托盘关键 Win32 调用现在统一归一化空的 `GetLastError`，启动、菜单和通知图标失败时不会再把 `%!w(<nil>)` 暴露给用户；真实托盘故障提示仍需实机触发确认。
-- `已完成` 托盘菜单遇到无法编码的 Selector 节点名称时会报告构建错误并清理已创建的菜单位图，不再静默留下失配的命令映射或 GDI 资源。
-- `已完成` 托盘菜单现在检查选择器分组标题、分隔线和底部操作项的 Win32 追加结果；文本编码或菜单资源失败时会返回错误并销毁不完整菜单，不再静默显示半个菜单。
-- `待实机验证` 2026-09-16 实机观察到控制器跨 S0 Modern Standby 保持运行时，某次首次打开菜单未显示 Selector 的复合勾选/国旗位图，随后再次打开菜单自行恢复；现已将复合位图改为直接写入 DIB 像素、在 GDI 勾选绘制后执行 `GdiFlush` 并规范化 alpha，Windows 自动测试通过，但真实睡眠唤醒循环和 Start11 启用/停用 A/B 仍待确认，暂不改动内核、Clash API 或睡眠恢复策略。
+- `已完成` 托盘图标已嵌入正式 Windows 构建，状态区分未运行、代理/TUN 工作中和故障，tooltip 显示当前模式。
+- `已完成` 内核进入 `Stopped` 后托盘优先显示「未运行」，不再因保留的 TUN/代理期望状态继续显示绿色工作中；启动和重启过渡态保留原提示。
+- `已完成` Homepage 调用检查 URL 编码和 `ShellExecuteW` 返回值，浏览器启动失败会在托盘报错。
+- `已完成` 托盘窗口类记录注册所有权，失败或关闭时只注销本进程实际注册的类；关键 Win32 调用归一化空的 `GetLastError`，不再把 `%!w(<nil>)` 暴露给用户。
+- `已完成` 托盘菜单遇到无法编码的节点名、分组标题、分隔线或底部操作项时报错并销毁不完整菜单，不再留下失配的命令映射或 GDI 资源。
+- `待实机验证` 2026-09-16 观察到跨 S0 Modern Standby 运行时首次打开菜单偶发缺少 Selector 的复合勾选/国旗位图（再次打开自行恢复）；现已改为直接写入 DIB 像素、GDI 勾选绘制后执行 `GdiFlush` 并规范化 alpha，自动测试通过，真实睡眠唤醒循环和 Start11 启用/停用仍待确认。
 - `待实机验证` 图标颜色、tooltip 和取消系统代理/TUN 后的状态需要在真实托盘中确认，自动化测试不能替代视觉检查。
-- `已完成` Windows 正式构建统一使用 `scripts/build.ps1`、Go 1.25.14、应用图标和 manifest；macOS 正式构建统一使用 `scripts/build-macos.sh`、CGO 和 `resources/macos/Info.plist`，默认输出 Universal `.app`。
-- `已完成` GitHub Actions 在推送 `v*` 标签时执行格式检查、测试、`go vet`，并在 Windows 与 macOS runner 上分别打包发布产物，最后由独立任务统一创建 GitHub Release。
-- `已完成` 发布工作流拆出独立的 Release 任务后，该任务没有检出仓库，`gh release create` 会因 `failed to run git: fatal: not a git repository` 失败；现在为发布步骤显式设置 `GH_REPO: ${{ github.repository }}`，Windows 与 macOS 产物构建成功后能正常创建 GitHub Release。
-
-- `已完成` Windows Runner 行尾问题修复后，`v0.1.1` 至 `v0.1.5` 的远程发布工作流均已成功，标签构建与 GitHub Release 链路已经得到实际验证。
-- `待实机验证` 当前 `main` 比 `v0.1.5` 多出系统代理和自动选择落点显示修改；在 Discord、Selector 菜单和代理清理验证完成前，不应直接把它作为新版本发布。
-- `已完成` 持续集成工作流在 Windows 和 macOS runner 上执行格式检查、全量测试和 `go vet`；发布工作流继续只负责版本标签产物。
-- `已完成` `scripts/build.ps1` 会保存并恢复调用者原有的 `GOTOOLCHAIN`、`GOOS`、`GOARCH` 和 `CGO_ENABLED` 环境变量，同时继续清理临时资源文件。
+- `已完成` 正式构建统一使用 `scripts/build.ps1`（Go 1.25.14、应用图标和 manifest）和 `scripts/build-macos.sh`（CGO、`Info.plist`，默认输出 Universal `.app`）。
+- `已完成` GitHub Actions 在推送 `v*` 标签时跑格式检查、测试、`go vet` 并打包产物，由独立任务创建 GitHub Release；该任务不再检出仓库后曾报 `failed to run git: fatal: not a git repository`，现已显式设置 `GH_REPO: ${{ github.repository }}`。
+- `已完成` `v0.1.1` 至 `v0.1.5` 的远程发布工作流均已成功，标签构建与 GitHub Release 链路已实际验证。
+- `已完成` 持续集成工作流在 Windows 和 macOS runner 上执行格式检查、全量测试和 `go vet`；发布工作流只负责版本标签产物。
+- `已完成` `scripts/build.ps1` 会保存并恢复调用者原有的 `GOTOOLCHAIN`、`GOOS`、`GOARCH` 和 `CGO_ENABLED`，并清理临时资源文件。
 - `待实机验证` 正式构建仍需在运行中的旧 EXE 场景核对目标替换结果、构建信息和是否遗留 `.exe~`；脚本不会强制结束用户正在运行的程序。
-- `已完成` 工具链从 Go 1.25.6 更新到同系列最新补丁 Go 1.25.14；该版本纳入截至 2026-08-19 的同系列安全和稳定性修复，并继续使用 Go 1.25 主版本构建基线。
-- `已完成` README 的 4–8 MiB 说明已明确标注为 Go 1.25.6 的历史样本，不再作为当前版本性能承诺；Go 1.26/1.27 也不直接升级。
-- `待实机验证` Go 1.25.14 与旧 1.25.6 的 Working Set、Private Memory 和完整托盘生命周期尚未做同一条件对比，当前正式构建的内存结论仍需真实 Windows 复测。
-- `待实机验证` 2026-09-12 对当前运行的 Go 1.25.6 产物连续采样约为 30.2 MiB Working Set、19.3 MiB Private Memory、406 handles，与 README 的 4–8 MiB 截图不一致；该产物构建信息仍指向 `v0.1.5+dirty`，需要用当前提交的正式构建冷启动后按相同口径复测，不能据此认定代码回归或继续沿用旧宣传值。
-- `设计待决定` 项目名称目前在仓库/模块/INI 的 `drover` 与二进制/发布包的 `dover` 之间混用；兼容名称和对外品牌仍需单独决定，暂不在本项中改名。
-- `已完成` README 的 Release 徽章已链接到本仓库的 Releases 页面，不再使用无效的字面量 `...` 目标。
-- `已完成` README 的 Build 徽章改为指向普通 push/PR 的 `ci.yml`，不再用只在版本标签运行的发布工作流代表主分支检查状态。
-- `已完成` 用户文档与开发文档分离，示例 INI 提供中文注释；`AGENTS.md` 只作为本地协作文件，不应上传到仓库。
-- `已完成` 2026-09-12 维护审计已完成；固定 Go 1.25.6 下 `gofmt -l cmd internal tools`、`go test -count=1 ./...` 和 `go vet ./...` 均通过，本条保留为历史审计记录，不代表当前工具链版本。
+- `已完成` 工具链从 Go 1.25.6 更新到 Go 1.25.14，仍以 Go 1.25 为主版本构建基线；Go 1.26/1.27 不直接升级。
+- `已完成` README 的 4–8 MiB 说明已标注为 Go 1.25.6 的历史样本，不再作为当前版本的性能承诺。
+- `待实机验证` Go 1.25.14 与旧 1.25.6 的内存和完整托盘生命周期尚未做同一条件对比，结论仍需真实 Windows 复测。
+- `待实机验证` 2026-09-12 对当时运行的 Go 1.25.6 产物连续采样约为 30.2 MiB Working Set、19.3 MiB Private Memory、406 handles，与 README 的 4–8 MiB 截图不一致；该产物构建信息指向 `v0.1.5+dirty`，需要用当前提交的正式构建冷启动后按相同口径复测，不能据此认定代码回归或继续沿用旧宣传值。
+- `设计待决定` 项目名称目前在仓库/模块/INI 的 `drover` 与二进制/发布包的 `dover` 之间混用；兼容名称和对外品牌仍需单独决定，暂不改名。
+- `已完成` README 的 Release 徽章指向本仓库 Releases 页面，Build 徽章指向普通 push/PR 的 `ci.yml`。
+- `已完成` 用户文档（`usage_note.md` 与 `README.md`）去人机化重构：精简说教与冗余底层实现科普，聚焦准备文件、快捷操作、配置要点及常见排查；示例 INI 提供中文注释；`AGENTS.md` 只作为本地协作文件，不应上传到仓库。
+- `已完成` 2026-09-12 维护审计在固定 Go 1.25.6 下通过（`gofmt -l cmd internal tools`、`go test -count=1 ./...`、`go vet ./...`）；本条为历史记录，不代表当前工具链版本。
 
 ## 官方源码对照审计
 
 - `设计待决定` 启动就绪判断存在提前接管代理的窗口：`Supervisor.Start` 仅等待 750ms 存活即发布 Running，托盘自动代理及配置重启随后即可写入系统代理；内核首次下载远程规则集时 router 初始化可能尚未结束，mixed 尚未监听。官方内核 `common/listener/listener.go` 的原生系统代理路径先监听再启用代理，官方 daemon 也在 `instance.Start()` 完成后发布 STARTED。本项为静态调用链确认，未实机复现；应单独处理代理启用时机，不靠增大固定延时或迁移 daemon 架构解决。
-
-- `已完成` 官方源码已浅克隆到项目同级目录 `../sing-box-for-desktop-reference`（`d9bc9073fdd91d4343242bcff3790555cf9dff9f`）与 `../sing-box-reference`（`927770c29f3e3698c711fc150e1066a4a78793a2`），分别用于桌面入口和 Windows 平台实现对照；另将 `../sing-reference` 固定到内核依赖的 `6f21f2425a959912c37d2ef43d61e2a663315dea`，便于离线查看底层 WinINet 逻辑。未安装依赖或构建官方客户端。
-- `已完成` 静态对照确认的「关闭代理时可能恢复失效旧端口」已按官方行为修复并实机验证：`restoreTarget`（连同 `proxyHostsMatch`/`proxyAddressMatch`、`proxySettingsEqual`）已删除，`RestoreSystemProxy` 改为与官方 `ClearSystemProxy` 一致，只把 flags 写成 `DIRECT | AUTO_DETECT`。
-- `设计待决定` 本项目 `setProxySettings` 忽略三次 WinINet 变更通知的返回值，而官方所用 sing `6f21f2425a95` 的 `common/wininet/wininet_windows.go` 会逐次检查并返回错误。通知失败时本项目仍报告成功，读取设置不能证明其他应用已刷新代理；属于确定的错误丢失路径，实际通知失败尚未实机复现。
+- `已完成` 官方源码已浅克隆到项目同级目录 `../sing-box-for-desktop-reference`（`d9bc9073fdd91d4343242bcff3790555cf9dff9f`）、`../sing-box-reference`（`927770c29f3e3698c711fc150e1066a4a78793a2`）和 `../sing-reference`（`6f21f2425a959912c37d2ef43d61e2a663315dea`），用于离线对照桌面入口、Windows 平台实现和底层 WinINet 逻辑；未安装依赖或构建官方客户端。
+- `已完成` 静态对照发现的「关闭代理时可能恢复失效旧端口」已按官方行为修复并实机验证，实现与来源见「Windows 代理与 Discord 问题」。
+- `设计待决定` `setProxySettings` 忽略三次 WinINet 变更通知的返回值，而官方所用 sing `6f21f2425a95` 的 `common/wininet/wininet_windows.go` 会逐次检查并返回错误；通知失败时本项目仍报告成功，读取设置不能证明其他应用已刷新代理。属于确定的错误丢失路径，实际通知失败尚未实机复现。
 
 ## 当前维护边界
 

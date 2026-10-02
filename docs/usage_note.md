@@ -1,155 +1,105 @@
 # 使用说明
 
-## 运行目录
+本程序是一个轻量级的系统托盘控制器，用于在 Windows 任务栏或 macOS 菜单栏中便捷管理 sing-box（开关系统代理、开启 TUN 虚拟网卡、切换节点等）。
 
-控制器不内置代理内核。运行时需要准备：
+## 准备文件
 
-- 控制器程序；
-- 对应平台的 sing-box 内核：Windows 为 `sing-box.exe`，macOS 为 `sing-box`；
-- 从 `examples/sing-box-drover.ini` 复制并改名得到的 `sing-box-drover.ini`；
-- 真实的 `config.json`。
+下载解压后，请把以下文件放在同一个文件夹下：
 
-这里的 `config.json` 必须是 sing-box 原生配置。v2rayN/Xray 配置中的
-`inbounds[].protocol`、`streamSettings` 等格式不能直接交给 sing-box，需先转换
-或改用 sing-box 专用配置。
+| 文件                    | 说明                                                           |
+| ----------------------- | -------------------------------------------------------------- |
+| `sing-box-dover-go.exe` | 控制器本体（macOS 为 `sing-box-drover.app`）                   |
+| `sing-box.exe`          | sing-box 内核（macOS 为 `sing-box`，需自行下载官方或兼容版本） |
+| `config.json`           | 你的 sing-box 配置文件（必须是已能正常工作的配置）             |
+| `sing-box-drover.ini`   | 控制器设置文件（压缩包内已自带默认配置）                       |
 
-Windows 发布包是一个目录，直接放入 `sing-box.exe`、`sing-box-drover.ini` 和
-`config.json` 后运行 `sing-box-dover-go.exe`。
+---
 
-macOS 发布包同时提供 arm64 和 x86_64：
+> **提示**：建议将程序存放在有普通读写权限的目录（如自建文件夹），尽量避免放在 `C:\Program Files` 等受系统写保护的目录下，以免无法正常生成日志。
 
-```text
-sing-box-drover-v版本/
-├── sing-box-drover.app
-├── sing-box
-├── config.json
-└── sing-box-drover.ini
-```
+## 使用方法
 
-请把 `sing-box` 和 `config.json` 放在 `.app` 旁边，然后双击
-`sing-box-drover.app`。未经过 Apple 公证的本地发布包如被 Gatekeeper 拦截，
-可右键选择“打开”，或按实际安装位置移除隔离属性：
+双击运行控制器后**不会弹出常规窗口**，程序会常驻在任务栏右下角托盘区（macOS 在顶部状态栏）。
 
-```bash
-xattr -dr com.apple.quarantine /path/to/sing-box-drover.app
-```
+![托盘菜单](./menu.png)
 
-如果 `sing-box` 来自浏览器下载并被 Gatekeeper 隔离，命令行检查也可能无输出
-退出。请只对复制到运行目录的内核副本移除隔离属性：
+### 快捷操作
 
-```bash
-xattr -cr /path/to/runtime/sing-box
-```
+- **单击托盘图标**：快速开启或关闭系统代理。
+- **Shift + 单击托盘图标**：快速开关 TUN 模式（需要管理员提权确认；macOS 可直接通过右键菜单操作）。
 
-也可以通过 `sb-dir` 和 `sb-config-file` 指向其他位置。控制器通过标准输入把
-运行时 JSON 交给内核，切换 TUN 或系统代理时不会改写源配置。
+### 图标状态
 
-macOS 上 `sb-dir` 留空时，控制器会使用 `.app` 所在目录查找 `sing-box`。一个
-适合首次运行的配置如下：
+- ⚪ **灰色 / 无色**：代理未开启（直连状态）
+- 🟢 **绿色**：系统代理或 TUN 正在运行中
+- 🔴 **红色**：内核启动失败或异常退出（鼠标悬停可查看错误提示）
 
-```ini
-[sing-box-drover]
-sb-dir =
-sb-config-file = config.json
-system-proxy-auto = off
-tun-start-mode = off
-log-file = sing-box-drover.log
-```
+### 托盘右键菜单
 
-托盘里的 `Homepage` 会打开 `sing-box-drover.ini` 中的 `homepage-url`。该项
-接受 `http://` 或 `https://` 地址，例如可直接填写本地 Web 面板
-`http://127.0.0.1:9090/ui/`。
+| 菜单项                         | 说明                                                                              |
+| ------------------------------ | --------------------------------------------------------------------------------- |
+| **节点列表**                   | 直接点击即可切换出站节点。若指向自动选择组（URLTest），会标出当前实际落点的节点。 |
+| **System Proxy**               | 勾选表示已开启系统代理。                                                          |
+| **TUN**                        | 开关虚拟网卡模式（仅在配置中有 `tun` 入站时显示）。                               |
+| **Start with Windows / macOS** | 勾选即可开启开机自启。                                                            |
+| **Restart core**               | 重启内核进程。修改了 `config.json` 后点此生效。                                   |
+| **Homepage**                   | 在浏览器中打开指定页面（可在 ini 中设为 Web 控制台网址）。                        |
+| **Quit**                       | 退出控制器并同步停止内核。                                                        |
 
-## macOS 本地运行检查
+## 配置要求 (config.json)
 
-复制好 `.app`、`sing-box`、`config.json` 和 `sing-box-drover.ini` 后，先直接
-检查内核配置，不要一开始就开启系统代理或 TUN：
+程序不会修改你的 `config.json` 原文件。为了让托盘功能正常运作，配置中需要包含以下对应配置项：
 
-```bash
-/path/to/runtime/sing-box --disable-color check -c /path/to/runtime/config.json
-open /path/to/runtime/sing-box-drover.app
-```
+1. **系统代理**：需要包含 `mixed` 或 `http` 类型的入站规则，并指定监听端口：
+   ```json
+   {
+     "type": "mixed",
+     "tag": "mixed-in",
+     "listen": "127.0.0.1",
+     "listen_port": 2080
+   }
+   ```
+2. **节点选择**：需要开启 Clash API，并包含至少一个 `selector` 类型的出站组：
+   ```json
+   "experimental": {
+     "clash_api": {
+       "external_controller": "127.0.0.1:9090"
+     }
+   }
+   ```
+3. **TUN 模式**：需要配置中包含 `tun` 类型的入站规则（没有的话菜单中不会出现 TUN 选项）。
+4. **注意**：如果配置中写了 `"set_system_proxy": true`，请改为 `false`，否则内核会与托盘争夺代理控制权。
 
-控制器不显示 Dock 图标。启动成功后，图标会出现在菜单栏中；可用以下命令确认
-控制器和内核都在运行，并持续查看日志：
+## 控制器设置 (sing-box-drover.ini)
 
-```bash
-ps -axo pid,ppid,stat,command | grep -E 'sing-box-drover|sing-box --disable-color'
-tail -f /path/to/runtime/sing-box-drover.log
-```
+通常保持默认即可直接使用。如需个性化调整，可以用记事本编辑同目录下的 `sing-box-drover.ini`：
 
-首次验证应先确认菜单栏菜单、Selector、`Restart core`、`Homepage` 和 `Quit`
-正常，再单独测试系统代理、TUN、登录启动以及睡眠唤醒。系统代理和 TUN 会修改
-真实系统状态，测试结束后应确认菜单状态和系统代理设置均已恢复。
+| 配置项                 | 默认值        | 说明                                                                              |
+| ---------------------- | ------------- | --------------------------------------------------------------------------------- |
+| `system-proxy-auto`    | `off`         | 是否在启动控制器时自动打开系统代理（`on` / `off`）                                |
+| `tun-start-mode`       | `off`         | 是否在启动控制器时自动打开 TUN 模式（`on` / `off`）                               |
+| `selector-menu-layout` | `auto`        | 节点菜单展示方式：`auto`、`flat`（平铺展示）或 `nested`（多节点时使用子菜单折叠） |
+| `homepage-url`         | 空            | 菜单中「Homepage」打开的网址（如面板地址 `http://127.0.0.1:9090/ui/`）            |
+| `log-file`             | 空            | 日志保存路径。填文件名如 `sing-box-drover.log` 记录日志，留空则不写文件（示例配置中默认开启） |
+| `sb-dir`               | 空            | 内核所在目录。留空默认在当前目录寻找 `sing-box.exe` / `sing-box`                  |
+| `sb-config-file`       | `config.json` | 配置文件名称或相对路径                                                            |
 
-## 首次测试
+修改 ini 保存后，需要重启控制器生效。
 
-准备一个干净的测试目录，放入控制器、目标内核和真实 JSON 配置。首次启动前，
-建议在 `sing-box-drover.ini` 中临时使用：
+## 常见排查
 
-```ini
-system-proxy-auto = off
-log-file = sing-box-drover.log
-```
-
-启动前应完整退出旧 Drover，并停止会占用相同 mixed、TUN 或 Clash API 端口的
-其他 `sing-box`、reF1nd 或兼容内核。先关闭 TUN 启动并查看日志，再依次测试
-系统代理、打开选择器菜单、切换节点，最后测试需要提权的 TUN 和登录启动。
-确认无误后，如果需要启动时自动开启系统代理，再把 `system-proxy-auto` 改为
-`on`；手动开启的系统代理在控制器退出时也会恢复开启前的用户设置。
-
-## 系统代理和 TUN
-
-Windows 使用 WinINet 的系统代理设置。macOS 使用 `networksetup` 修改当前主
-网络服务的 HTTP、HTTPS 和 SOCKS 代理，并在退出或重启内核时恢复原设置。若
-系统代理在 Drover 运行期间被用户或其他程序修改，控制器会放弃覆盖，保留外部
-的新设置。
-
-macOS 的 `networksetup` 写操作和 TUN 都需要管理员权限。Windows 会请求 UAC；
-macOS 会显示管理员授权对话框。若先在普通权限下开启系统代理或 TUN，控制器会
-交接到提权后的新实例；启动时设置 `system-proxy-auto = on` 也会触发同样的授权。
-macOS 以管理员权限运行时无法为当前普通用户写入 LaunchAgent，因此请先在普通
-权限下设置 “Start with macOS”，再开启系统代理或 TUN。
-
-## 选择器和节点记忆
-
-内核提供 `experimental.clash_api` 时，状态栏菜单会请求 `GET /proxies`。
-所有 `type: "Selector"` 项按 API 返回顺序显示，其 `all` 列表保持原样，包括
-provider 展开的节点；当前 `now` 项会被勾选。选择节点后，控制器发送
-`PUT /proxies/<selector>`，再要求内核清理旧连接。API 暂时失败时仍保留上次
-成功读取的菜单数据。
-
-如果当前选项指向 `URLTest` 自动选择组，菜单会在勾选项后显示内核当前选中的
-节点；该节点只用于显示，不提供单独的手动修改入口。
-
-选择器是否记忆由 sing-box 自身配置决定；控制器不会额外写入独立的状态文件，
-也不会修改源配置。旧配置中的 `selector-persist` 项会被忽略。
-
-## 登录启动
-
-Windows 的 “Start with Windows” 使用任务计划程序中的 `sing-box-drover`
-任务，不是“设置 → 应用 → 启动”里的注册表启动项。可在任务计划程序根目录检查，
-或运行：
-
-```powershell
-schtasks /Query /TN sing-box-drover /FO LIST /V
-```
-
-macOS 的 “Start with macOS” 使用：
-
-```text
-~/Library/LaunchAgents/com.moxuun.sing-box-drover.plist
-```
-
-关闭该选项会移除这个 plist，并尝试卸载当前会话中的 LaunchAgent。若随后需要
-开启系统代理或 TUN，请在普通权限实例中完成登录启动设置；提权后的实例只能管理
-当前会话，不能替普通用户修改 LaunchAgent。
-
-## 其他细节
-
-- Windows 支持 `Shift + 左键` 点击托盘图标快速开启/关闭 TUN；macOS 使用状态栏
-  菜单中的 TUN 项。
-- 托盘图标绿色/红色/无色，分别代表代理运行中/出现错误/代理关闭。
-- macOS 会监听系统唤醒通知，并在内核或 Clash API 异常时自动恢复。
-- 如果日志出现 `listen tcp ... bind`，先释放对应端口或修改源配置中的 Web/API
-  端口；控制器不会擅自改写用户的 sing-box 配置。
+- **双击后没有图标，也没有反应？**  
+  通常是内核启动失败或配置存在语法错误。可以在终端/命令提示符中执行 `sing-box check -c config.json` 检查具体报错。
+- **图标变成红色？**  
+  鼠标悬停在托盘图标上即可查看错误提示。常见原因是端口被其他代理程序占用，或配置文件格式错误。
+- **菜单里看不到节点？**  
+  检查 `config.json` 中是否配置了 `selector` 类型的出站，并且是否正确启用了 `experimental.clash_api`。
+- **macOS 提示“应用已损坏”或无法打开？**  
+  这是 macOS Gatekeeper 安全拦截。在终端运行以下命令解除隔离属性即可：
+  ```bash
+  xattr -dr com.apple.quarantine /path/to/sing-box-drover.app
+  # 若内核也是从浏览器直接下载的，同样对其执行：
+  xattr -cr /path/to/sing-box
+  ```
+- **如何彻底清理卸载？**  
+  右键托盘菜单选择退出。若开启过开机自启，请先在菜单中取消勾选，之后直接删除整个程序文件夹即可。

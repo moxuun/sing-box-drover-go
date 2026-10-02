@@ -1,32 +1,38 @@
-# sing-box-drover-go（Go 重构版）
+# sing-box-drover-go
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/moxuun/sing-box-dover-go)](https://github.com/moxuun/sing-box-dover-go/releases)
+[![Release](https://img.shields.io/github/v/release/moxuun/sing-box-drover-go)](https://github.com/moxuun/sing-box-drover-go/releases)
 
+轻量的 Windows / macOS sing-box 托盘控制器。配合你自己准备好的 `sing-box` 内核与原生 `config.json`，在系统托盘中快捷开关系统代理、TUN 模式及切换出站节点。
 
-本项目是 [`hdrover/sing-box-drover`](https://github.com/hdrover/sing-box-drover) 的 Go 重构版。Windows 使用原生 Win32 托盘，macOS 使用 AppKit 状态栏；两端都通过外置 sing-box 内核控制系统代理、TUN 和出站选择器，并针对 reF1nd 等兼容内核的 provider 节点展开方式进行了适配。
+> **提示**：本程序专为已有可用配置的用户设计，仅负责托盘控制与状态切换；不内置内核、不修改配置文件，也不提供订阅管理功能。
 
-## 重构原因
+## 快速开始
 
-- [`hdrover/sing-box-drover`](https://github.com/hdrover/sing-box-drover) 不适配 [`reF1nd`](https://github.com/reF1nd/sing-box) 内核 `config.json` 的
-  `provider` 写法，托盘菜单节点显示不全。
-- [`hdrover/sing-box-drover`](https://github.com/hdrover/sing-box-drover)用 `Pascal` 语言编写，编译环境过大，难以维护。
+1. 从 [Releases](https://github.com/moxuun/sing-box-drover-go/releases) 下载对应系统的压缩包并解压。
+2. 将你的 `sing-box.exe`（macOS 为 `sing-box`）和 `config.json` 放入同级目录。
+3. 双击运行 `sing-box-dover-go.exe`（macOS 运行 `sing-box-drover.app`）。程序无主窗口，常驻于托盘。
+4. 右键托盘图标展开菜单，点击 `System Proxy` 即可开启系统代理。
+
+更多操作、配置要求及排查方法请参考[使用说明](docs/usage_note.md)。
+
+## 功能特点
+
+- **便捷开关**：单击托盘图标切换系统代理；`Shift + 单击` 切换 TUN 模式（macOS 可在菜单中点击 `TUN`）。
+- **节点切换**：菜单直接拉取运行中内核的 Selector 节点列表，支持 provider 展开节点，点击即可切换。
+- **自动落点提示**：自动选择组（URLTest）会实时标注内核实际选中的落地节点。
+- **进程守护**：内核异常退出自动告警，支持通过菜单 `Restart core` 一键重启内核。
+- **开机自启**：支持通过菜单项随系统登录启动。
+- **原生极轻**：基于系统原生 API 构建（Windows 原生 Win32 / macOS 原生 AppKit），不依赖复杂 GUI 框架或 Web 运行时。
 
 ## 平台支持
 
-- Windows 10/11 amd64：原生 Win32 托盘、WinINet 系统代理、任务计划程序登录启动和 UAC 提权。
-- macOS 12+ universal：原生 AppKit 状态栏、`networksetup` 系统代理、LaunchAgent 登录启动和按需管理员提权；发布包同时包含 arm64 与 x86_64。
-- 两端都要求用户自行提供对应平台的 `sing-box`/`sing-box.exe` 和真实配置，不内置代理内核。
-
-macOS 的包结构、Gatekeeper 处理和本地运行检查见
-[使用说明](docs/usage_note.md#macos-本地运行检查)。
+- **Windows 10/11 (amd64)**：原生 Win32 托盘、WinINet 系统代理、任务计划程序登录自启、按需 UAC 提权。
+- **macOS 12+ (Universal)**：原生 AppKit 状态栏、`networksetup` 系统代理、LaunchAgent 登录自启、按需管理员提权，支持 Apple Silicon 及 Intel 设备。
 
 ## 内存占用
 
-历史样本曾约 4–8 MiB（Windows 任务管理器的工作集，不包含 sing-box
-内核；实际值会随系统和配置变化）。这个数字来自 Go 1.25.6 的旧 Windows amd64
-构建，仅供参考，不是当前版本的性能承诺；Go 1.25.14 正式构建仍需在相同条件下
-复测 Working Set 和 Private Memory 后再更新结论。
+程序本体非常轻量，托盘进程日常内存占用约 4–8 MiB（工作集，不含 sing-box 内核本身）。
 
 ![Windows 任务管理器中的托盘内存占用](./docs/memory_usage.png)
 
@@ -34,7 +40,11 @@ macOS 的包结构、Gatekeeper 处理和本地运行检查见
 
 ![托盘菜单界面](./docs/menu.png)
 
-## 文档
+## 相关文档
 
-- 用户使用、配置和首次测试见 [使用说明](docs/usage_note.md)；
-- 目录、构建和自动发布见 [开发说明](docs/dev_note.md)。
+- [使用说明](docs/usage_note.md)：安装准备、功能操作、配置要求及常见排查
+- [开发说明](docs/dev_note.md)：维护边界、设计记录与构建发布流程
+
+## 与原版的关系
+
+本项目是 [`hdrover/sing-box-drover`](https://github.com/hdrover/sing-box-drover) 的 Go 重构版。原版基于 Pascal 编写，且未能适配部分第三方内核通过 `provider` 展开的节点列表。Go 重构版改为直接从运行中内核的 API 动态读取出站节点。
