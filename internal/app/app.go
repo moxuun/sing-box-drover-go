@@ -663,9 +663,10 @@ func (a *App) disableSystemProxyIfActive() error {
 	return err
 }
 
-// restoreSystemProxyLocked requires proxyMu. A false result means the system
-// proxy changed externally, so the controller relinquished ownership without
-// overwriting the newer setting.
+// restoreSystemProxyLocked requires proxyMu. A false result means the platform
+// kept newer settings instead of releasing this controller's own: macOS
+// captures the previous configuration and can find it changed by something
+// else. Windows always clears the proxy and can only report an error.
 func (a *App) restoreSystemProxyLocked() (bool, error) {
 	a.mu.RLock()
 	active, owned, session := a.proxyActive, a.proxyOwned, a.proxySession

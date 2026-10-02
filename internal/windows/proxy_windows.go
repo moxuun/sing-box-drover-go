@@ -22,6 +22,7 @@ const (
 	internetPerConnFlagsUI        = 10
 	proxyTypeDirect               = 0x00000001
 	proxyTypeProxy                = 0x00000002
+	proxyTypeAutoDetect           = 0x00000008
 	internetOptionSettingsChanged = 39
 	internetOptionPerConnection   = 75
 	internetOptionRefresh         = 37
@@ -52,12 +53,11 @@ type proxySettings struct {
 	autoConfigURL string
 }
 
-// ProxySession records the settings replaced by this controller and the
-// normalized settings WinINet actually applied.
-type ProxySession struct {
-	original proxySettings
-	applied  proxySettings
-}
+// ProxySession is the handle a controller keeps for as long as it owns the
+// system proxy. WinINet needs no captured state for that: releasing the proxy
+// only clears it. macOS records the previous configuration instead, because
+// networksetup has no equivalent single-flag clear.
+type ProxySession struct{}
 
 var (
 	wininet             = winapi.NewLazySystemDLL("wininet.dll")
@@ -131,6 +131,24 @@ func queryProxySettings() (proxySettings, error) {
 	return queryProxySettingsWithFlags(internetPerConnFlags)
 }
 
+// applyProxyOptions writes one WinINet per-connection option list and tells
+// the system that the proxy settings changed.
+func applyProxyOptions(options []perConnOption) error {
+	list := perConnOptionList{
+		size:        uint32(unsafe.Sizeof(perConnOptionList{})),
+		optionCount: uint32(len(options)),
+		options:     &options[0],
+	}
+	ok, _, callErr := internetSetOption.Call(0, internetOptionPerConnection, uintptr(unsafe.Pointer(&list)), uintptr(unsafe.Sizeof(list)))
+	if ok == 0 {
+		return proxyCallError("InternetSetOption", callErr)
+	}
+	_, _, _ = internetSetOption.Call(0, internetOptionSettingsChanged, 0, 0)
+	_, _, _ = internetSetOption.Call(0, internetOptionProxyChanged, 0, 0)
+	_, _, _ = internetSetOption.Call(0, internetOptionRefresh, 0, 0)
+	return nil
+}
+
 func setProxySettings(settings proxySettings) error {
 	server, err := winapi.UTF16PtrFromString(settings.server)
 	if err != nil {
@@ -151,29 +169,21 @@ func setProxySettings(settings proxySettings) error {
 		{option: internetPerConnAutoConfigURL, value: perConnValue{raw: uintptr(unsafe.Pointer(autoConfigURL))}},
 	}
 	options[0].value.raw = uintptr(settings.flags)
-	list := perConnOptionList{
-		size:        uint32(unsafe.Sizeof(perConnOptionList{})),
-		optionCount: uint32(len(options)),
-		options:     &options[0],
-	}
-	ok, _, callErr := internetSetOption.Call(0, internetOptionPerConnection, uintptr(unsafe.Pointer(&list)), uintptr(unsafe.Sizeof(list)))
+	err = applyProxyOptions(options)
 	runtime.KeepAlive(server)
 	runtime.KeepAlive(bypass)
 	runtime.KeepAlive(autoConfigURL)
-	if ok == 0 {
-		return proxyCallError("InternetSetOption", callErr)
-	}
-	_, _, _ = internetSetOption.Call(0, internetOptionSettingsChanged, 0, 0)
-	_, _, _ = internetSetOption.Call(0, internetOptionProxyChanged, 0, 0)
-	_, _, _ = internetSetOption.Call(0, internetOptionRefresh, 0, 0)
-	return nil
+	return err
 }
 
-func proxySettingsEqual(left, right proxySettings) bool {
-	return left.flags == right.flags &&
-		left.server == right.server &&
-		left.bypass == right.bypass &&
-		left.autoConfigURL == right.autoConfigURL
+// clearSystemProxy switches the manual proxy and any explicit PAC URL off by
+// writing only the flags option, leaving the server, bypass and PAC strings
+// alone. This is the partial update the official Windows client performs when
+// it releases the system proxy.
+func clearSystemProxy() error {
+	flags := perConnOption{option: internetPerConnFlags}
+	flags.value.raw = uintptr(proxyTypeDirect | proxyTypeAutoDetect)
+	return applyProxyOptions([]perConnOption{flags})
 }
 
 func restoreAfterProxyVerificationFailure(original proxySettings, verifyErr error, restore func(proxySettings) error) error {
@@ -201,25 +211,23 @@ func EnableSystemProxy(host string, port int) (ProxySession, error) {
 	if err := setProxySettings(desired); err != nil {
 		return ProxySession{}, err
 	}
-	applied, err := queryProxySettings()
-	if err != nil {
+	if _, err := queryProxySettings(); err != nil {
 		return ProxySession{}, restoreAfterProxyVerificationFailure(original, err, setProxySettings)
 	}
-	return ProxySession{original: original, applied: applied}, nil
+	return ProxySession{}, nil
 }
 
-// RestoreSystemProxy restores the captured settings only while WinINet still
-// contains the values applied by this controller. A user or another program
-// changing the proxy takes ownership and must not be overwritten.
-func RestoreSystemProxy(session ProxySession) (bool, error) {
-	current, err := queryProxySettings()
-	if err != nil {
-		return false, err
-	}
-	if !proxySettingsEqual(current, session.applied) {
-		return false, nil
-	}
-	if err := setProxySettings(session.original); err != nil {
+// RestoreSystemProxy clears the system proxy the way the official Windows
+// client does: the WinINet flags become DIRECT | AUTO_DETECT, which switches
+// the manual proxy and any explicit PAC URL off while leaving the server,
+// bypass and PAC strings in the registry untouched.
+//
+// It deliberately neither restores the settings captured before this
+// controller took over nor checks whether another program changed them in the
+// meantime. The official client treats the system proxy as a switch it turns
+// off, and the captured value may well point at a port nothing listens on.
+func RestoreSystemProxy(ProxySession) (bool, error) {
+	if err := clearSystemProxy(); err != nil {
 		return false, err
 	}
 	return true, nil
