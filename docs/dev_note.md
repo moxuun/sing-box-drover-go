@@ -97,11 +97,13 @@
 - `设计待决定` 已核对成熟客户端公开分支源码：v2rayN 的 `AppExitAsync` 调用 `UpdateSysProxy(config, true)`，除 Unchanged 模式外转 ForcedClear，Windows `UnsetProxy()` 设置 DIRECT；Clash Verge Rev 的 `update_sysproxy` 关闭分支和 `reset_sysproxy` 将全局代理与 PAC 关闭，并非恢复接管前快照。因此“退出必须恢复旧代理”不是通用正确标准，恢复失效旧端口也可能导致断网；本项目清理与恢复策略需单独决定，本次仅研究、不修改代理实现。来源：[v2rayN SysProxyHandler](https://github.com/2dust/v2rayN/blob/master/v2rayN/ServiceLib/Handler/SysProxy/SysProxyHandler.cs)、[AppManager](https://github.com/2dust/v2rayN/blob/master/v2rayN/ServiceLib/Manager/AppManager.cs)、[ProxySettingWindows](https://github.com/2dust/v2rayN/blob/master/v2rayN/ServiceLib/Handler/SysProxy/ProxySettingWindows.cs)、[Clash Verge Rev sysopt](https://github.com/clash-verge-rev/clash-verge-rev/blob/main/src-tauri/src/core/sysopt.rs)。结论仅针对本次读取的分支实现，非所有发行版本的实机验证。
 
 - `已完成` 修复残留代理识别只比较主机、不比较端口的问题：`restoreTarget` 与 `proxyAddressMatch` 现在要求完整的 `host:port` 与本次写入的地址一致，才认定原状态是本程序自己的残留。用户原有的其他 `127.0.0.1:<port>` 本地代理不再被误认，关闭代理或退出时会原样恢复；原先把同主机不同端口判为匹配的测试已改为拒绝。已知残留：用户改了配置里的 mixed 监听端口后，上一轮留下的旧端口代理不再被识别，那个场景仍会回写残留状态，本轮未处理。
-- `待实机验证` 需要在真实环境确认：先让其他程序把系统代理设为 `127.0.0.1:7890`，再用本程序开启并关闭代理，确认结束时代理被还原为 `127.0.0.1:7890` 而不是被关闭。
+- `已完成` 关闭系统代理改为对齐官方 Windows 客户端：`RestoreSystemProxy` 只写 WinINet 的 flags 一项，值为 `DIRECT | AUTO_DETECT`，手动代理和显式 PAC 标志被关掉，服务器、bypass 和 PAC 字符串保持原样；不再恢复接管前的快照，也不再检查当前设置是否被其他程序改过。`restoreTarget`、`proxyHostsMatch`/`proxyAddressMatch`、`proxySettingsEqual` 随之删除，`ProxySession` 在 Windows 上不再携带状态（macOS 仍记录旧配置）。
+- `已完成` 上一条的实机验证（本机注册表往返）：开启后读回 `flags=0x3 server="http://127.0.0.1:10808" bypass="<local>" pac=""`，清空后读回 `flags=0x9` 且三个字符串完全不变，测试结束后注册表与测试前逐项一致。原先按旧前提写的两次修复已用 `git revert` 撤销（`e94d2a8` 撤销 `c556bb9`、`5006ffb` 撤销 `015777e`）。
+- `已完成` 行为变更（已知且有意）：用户自有的其他代理（例如先由其他程序设为 `127.0.0.1:7890`）在本程序开启再关闭后也会被关闭，而不是被恢复；这是官方客户端 `ClearSystemProxy` 的既有行为，不再当作缺陷处理，也不要再加回恢复或归属判断逻辑。
 
 - `已完成` 已定位旧系统代理写法同时写入 `http`、`https`、`socks` 映射，可能让 Discord 的 WSS 连接走不同的 SOCKS 路径，导致关闭 TUN 时无法正常进入。
 - `待实机验证` 已将系统代理写法收敛为单一 HTTP 代理，并补发 WinInet 代理设置变更通知；这不删除 mixed 入站的 SOCKS 能力，但需要退出旧托盘、重新启动 Discord 后在真实环境验证。
-- `已完成` 启用系统代理前会读取 WinINet 的代理标志、服务器、bypass 和 PAC 地址；关闭时仅在当前状态仍等于本程序写入值时恢复原状态，用户或其他程序中途修改后会放弃所有权而不覆盖新设置。受保护的 Windows 往返测试已确认写入后能够恢复到原状态。
+- `已完成` 启用系统代理前仍会读取 WinINet 的代理标志、服务器、bypass 和 PAC 地址，用它作为写入基准，因此本程序不理解的标志和字符串在开启期间保持原值；写入后的校验失败仍会回滚（见下一条）。关闭不再走恢复路径，也不再判断当前值是否等于自己写入的值。
 - `已完成` 系统代理写入后的验证失败会继续尝试回滚，并把回滚失败与验证错误一起向上报告，不再静默丢失可能残留的代理状态。
 - `已完成` 手动开启与自动开启的系统代理使用同一所有权生命周期；正常退出、内核失败、托盘重启、TUN 提权和开机启动提权都会恢复或交接代理状态，新进程启动失败时原进程会重新接管。
 - `已完成` 系统代理接管入口现在要求 sing-box 内核处于 `Running`；启动失败、停止或恢复中的内核不会重新把系统代理指向失效端口，重启成功后的内部恢复仍按启动结果执行。
@@ -147,7 +149,7 @@
 - `设计待决定` 启动就绪判断存在提前接管代理的窗口：`Supervisor.Start` 仅等待 750ms 存活即发布 Running，托盘自动代理及配置重启随后即可写入系统代理；内核首次下载远程规则集时 router 初始化可能尚未结束，mixed 尚未监听。官方内核 `common/listener/listener.go` 的原生系统代理路径先监听再启用代理，官方 daemon 也在 `instance.Start()` 完成后发布 STARTED。本项为静态调用链确认，未实机复现；应单独处理代理启用时机，不靠增大固定延时或迁移 daemon 架构解决。
 
 - `已完成` 官方源码已浅克隆到项目同级目录 `../sing-box-for-desktop-reference`（`d9bc9073fdd91d4343242bcff3790555cf9dff9f`）与 `../sing-box-reference`（`927770c29f3e3698c711fc150e1066a4a78793a2`），分别用于桌面入口和 Windows 平台实现对照；另将 `../sing-reference` 固定到内核依赖的 `6f21f2425a959912c37d2ef43d61e2a663315dea`，便于离线查看底层 WinINet 逻辑。未安装依赖或构建官方客户端。
-- `设计待决定` 静态对照确认本项目在关闭代理时可能恢复失效旧端口：`restoreTarget` 只排除与当前端口完全相同的残留，原来失效的其他端口会被保存并回写；官方 Windows `Disable` 清除启用标志而不恢复旧快照。该触发条件下“关闭代理”仍留下开启的无服务端口，影响遵循系统代理的应用；尚未修改或实机复现。
+- `已完成` 静态对照确认的「关闭代理时可能恢复失效旧端口」已按官方行为修复并实机验证：`restoreTarget`（连同 `proxyHostsMatch`/`proxyAddressMatch`、`proxySettingsEqual`）已删除，`RestoreSystemProxy` 改为与官方 `ClearSystemProxy` 一致，只把 flags 写成 `DIRECT | AUTO_DETECT`。
 - `设计待决定` 本项目 `setProxySettings` 忽略三次 WinINet 变更通知的返回值，而官方所用 sing `6f21f2425a95` 的 `common/wininet/wininet_windows.go` 会逐次检查并返回错误。通知失败时本项目仍报告成功，读取设置不能证明其他应用已刷新代理；属于确定的错误丢失路径，实际通知失败尚未实机复现。
 
 ## 当前维护边界
