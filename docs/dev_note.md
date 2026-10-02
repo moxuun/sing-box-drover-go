@@ -61,7 +61,8 @@
 - `待实机验证` 仍需在真实 Windows 托盘层面确认最终显示：让内核在宽限期内失败（例如配置错误），确认托盘落到失败/停止而不是运行中，且系统代理保持关闭。
 - `已完成` 替换实例的等待预算不再固定为 10 秒，而是由 `core.StopGracePeriod` + `core.StopCleanupWait` + 5 秒余量导出，覆盖旧实例完整关闭预算；交接超时也不再作为普通重复启动静默退出，而是返回 `ErrRestartHandoff` 并提示用户重新启动。
 - `待实机验证` 需要在真实环境确认：在旧实例需要走满优雅停止窗口时点击重启内核，确认新实例能完成交接而不是两边都退出。
-- `设计待决定` 本次 Windows 调用链审计发现替代进程交接只传递开启状态，没有显式关闭参数：当 INI 的 `tun-start-mode` 或 `system-proxy-auto` 为 on，用户手动关闭后再点重启（或触发提权交接），新实例会重新应用启动默认值，不能保持当前关闭状态；尚未修改，需补齐交接状态语义。
+- `已完成` 替代进程交接现在总是传递显式的功能状态：新增 `-no-tun` / `-no-proxy`，与原有的 `-tun` / `-proxy` 成对，三个交接调用点统一用 `handoffTunFlags` / `handoffProxyFlags` 传当前状态，`startupTunRequested` / `startupProxyRequested` 让显式关闭优先于 INI 的 `tun-start-mode` / `system-proxy-auto`。托盘的代理启动条件不再自行重算，改问 `App.StartupProxyRequested()`，这条判断原本散落在三处。`TestRestartHandoffPreservesFeatureState` 覆盖四种组合；把 guard 去掉后「用户关掉的功能保持关闭」一例会变红。
+- `待实机验证` 需要在真实托盘确认：INI 里 `tun-start-mode` / `system-proxy-auto` 为 on，手动关掉后点「重启内核」，重启后应仍是关闭状态；提权交接（开 TUN、改自启）后同样保持。
 - `已完成` 睡眠恢复不再把 Clash API 客户端自身的请求超时当作恢复上下文结束：Clash 客户端有 1 秒请求超时，超时错误会包裹 `context.DeadlineExceeded`，无法与恢复预算用尽区分。新增 `resumeProbeEndedRecovery` 只判断调用方 `ctx.Err()`，因此连续 API 超时后仍会重启失效内核，只有恢复上下文真的结束才提前返回。新增 `TestResumeProbeEndedRecovery` 固定该判断。
 - `待实机验证` 需要在真实睡眠唤醒后确认：内核唤醒后 API 持续无响应（例如内核假死），控制器最终重启内核并恢复选择器，而不是直接返回错误。
 
@@ -84,6 +85,10 @@
 - `待实机验证` 仍需在真实睡眠/唤醒周期中观察 API 短暂不可用、内核真实退出和托盘提示，确认重试窗口覆盖实际恢复时间且不会掩盖真正故障。
 
 ### Windows 代理与 Discord 问题
+
+- `已完成` 本地协作规范 `AGENTS.md` 已精简为 BUG 修复与维护规则，删除开发阶段的重复说明和功能规划，保留配置/权限/生命周期边界、正式构建要求、验证与文档同步要求。系统代理、退出及重启等行为先参考成熟代理客户端，优先核对官方 sing-box；不凭直觉判定 BUG，不为假设场景增加恢复或归属逻辑，也不强制保留原代理保护策略。此次仅更新规范，未修改运行时代码。
+
+- `设计待决定` 维护者要求系统代理策略以官方 Windows 客户端为依据，不再添加推测性的恢复逻辑。已从官方 Desktop 文档追踪到 `sing-box-for-desktop`，并核对 sing-box 提交 `927770c29f3e3698c711fc150e1066a4a78793a2` 的 `experimental/boxdd/platform_windows.go`、`common/settings/proxy_windows.go` 及其依赖 sing 提交 `6f21f2425a95` 的 `common/wininet/wininet_windows.go`：已启用的代理在关闭时调用 `ClearSystemProxy`，仅将 flags 设为 `DIRECT | AUTO_DETECT`，不恢复旧代理快照、不检查当前设置是否被其他软件改过；服务器、bypass 和 PAC 字符串不清空，但手动代理和显式 PAC 标志关闭。完全对齐会移除本项目“外部改动后不覆盖”的既有行为；协作规范已调整为参考成熟客户端，不再强制该保护，运行时实现尚未调整，也未做实机验证。来源：[官方 Desktop 文档](https://sing-box.sagernet.org/clients/desktop/)、[Windows 平台调用](https://github.com/SagerNet/sing-box/blob/927770c29f3e3698c711fc150e1066a4a78793a2/experimental/boxdd/platform_windows.go)、[底层 WinINet 实现](https://github.com/SagerNet/sing/blob/6f21f2425a95/common/wininet/wininet_windows.go)。
 
 - `设计待决定` 已核对成熟客户端公开分支源码：v2rayN 的 `AppExitAsync` 调用 `UpdateSysProxy(config, true)`，除 Unchanged 模式外转 ForcedClear，Windows `UnsetProxy()` 设置 DIRECT；Clash Verge Rev 的 `update_sysproxy` 关闭分支和 `reset_sysproxy` 将全局代理与 PAC 关闭，并非恢复接管前快照。因此“退出必须恢复旧代理”不是通用正确标准，恢复失效旧端口也可能导致断网；本项目清理与恢复策略需单独决定，本次仅研究、不修改代理实现。来源：[v2rayN SysProxyHandler](https://github.com/2dust/v2rayN/blob/master/v2rayN/ServiceLib/Handler/SysProxy/SysProxyHandler.cs)、[AppManager](https://github.com/2dust/v2rayN/blob/master/v2rayN/ServiceLib/Manager/AppManager.cs)、[ProxySettingWindows](https://github.com/2dust/v2rayN/blob/master/v2rayN/ServiceLib/Handler/SysProxy/ProxySettingWindows.cs)、[Clash Verge Rev sysopt](https://github.com/clash-verge-rev/clash-verge-rev/blob/main/src-tauri/src/core/sysopt.rs)。结论仅针对本次读取的分支实现，非所有发行版本的实机验证。
 
