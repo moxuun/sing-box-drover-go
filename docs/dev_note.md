@@ -27,7 +27,9 @@
 - `已完成` 开机自启任务使用 `/RL LIMITED` 以当前用户权限启动；需要 TUN 时仍沿用启动流程中的按需 UAC 提权，修改任务继续由提权后的替代托盘进程完成，并保留当前 TUN 状态，避免非 TUN 场景长期运行管理员权限托盘。
 - `已完成` 自启设置的提权交接改为一次性助手：`-autostart-enable` / `-autostart-disable` 在 `NewAt` 里于获取单实例和读取配置之前处理，成功后返回 `ErrAutostartHandled`，进程不接管控制器、不启动内核、不建托盘即退出，所以再也不会因为一次打开自启就留下长期以管理员运行的托盘和内核。`LaunchAutostartElevated` 不再传 `-restart`、不再携带 TUN 状态，也不再做系统代理交接：助手不启动内核，交出去就没人恢复代理。托盘不再自我关闭，勾选状态在下次构建菜单时重查。附带的行为变化：自启更新不再做配置预检，配置损坏不再阻止开启自启。`TestAutostartHandoffLaunchesOneShotHelper` 验证两种开关都不带 `-restart`、不碰系统代理，并不再被配置检查挡住。
 - `待实机验证` 需要在真实 Windows 上确认：普通权限下勾选「Start with Windows」，UAC 通过后原托盘继续运行且任务管理器中仍是非管理员，任务计划里注册成功；拒绝 UAC 时原托盘保留并提示。
-- `设计待决定` 自启注册的用户身份仍取 `user.Current()`：跨账户 UAC（标准用户 A 用管理员 B 的凭据提权）时会把任务注册给 B 而不是 A；固定任务名也没有隔离不同用户，存在相互覆盖/删除风险。改动前先弄清迁移陷阱：改成按用户命名后，旧任务名的注册既不会被 `QueryAutostart` 看到，也不会被 `SetAutostart(false)` 删除，可能出现「关不掉」以及登录时重复注册；需要先决定是读取任务 XML 的 `<Principal><UserId>` 来接管旧任务，还是保留固定名字但拒绍修改属于其他用户的任务。
+- `已完成` 自启任务的账户身份不再取自提权后的 `user.Current()`：托盘在发起提权前把自己的账户名通过 `-autostart-owner` 传给一次性助手，助手用 `SetAutostart(enabled, owner)` 注册任务，`owner` 为空时才回落到 `user.Current()`（托盘自身已经提权的那条路径）。跨账户 UAC（标准用户 A 用管理员 B 的凭据提权）不再把任务注册给 B。`ParseFlags` 为此支持带值选项，`autostartCreateArgs` 的 argv 形状未变（一直就是显式 `/RU <用户名>`），只是取值来源改了；附带拒绝含引号或换行的用户名。`TestParseFlagsReadsAutostartOwner`、`TestAutostartHandoffLaunchesOneShotHelper` 覆盖传递链路。
+- `待实机验证` 跨账户 UAC 至少需要两个账户和另一个账户的密码，本机只有一个账户，无法复现。本机实测附带结论：非提权会话下 `schtasks /Create` 直接返回「拒绝访问」，不带 `/RU` 也一样，所以提权助手必须保持提权运行，无法在非提权下验证任务创建。本机已有真实的 `sing-box-drover` 任务，验证用的是临时任务名且未创建成功，未触碰真实任务。
+- `设计待决定` 固定任务名 `sing-box-drover` 仍是机器级资源，没有按用户隔离：不同 Windows 用户各自启用自启会互相覆盖或删除彼此的任务。改动前先弄清迁移陷阱：改成按用户命名后，旧任务名的注册既不会被 `QueryAutostart` 看到，也不会被 `SetAutostart(false)` 删除，可能出现「关不掉」以及登录时重复注册；需要先决定是读取任务 XML 的 `<Principal><UserId>` 来接管旧任务，还是保留固定名字但拒绝修改属于其他用户的任务。
 - `已完成` Task Scheduler 查询、创建和删除现在使用 10 秒超时；任务计划服务异常时不会无限阻塞启动流程或托盘菜单。
 - `已完成` Task Scheduler 的 `/XML` 输出现在同时支持原始 UTF-16（含 BOM 或无 BOM），以及字节流已转换但声明仍为 `UTF-16` 的 Windows 输出；自启验证不会再因 `Decoder.CharsetReader is nil` 失败。
 - `已完成` 自启状态查询改用任务计划程序 XML 的 `Settings/Enabled` 字段；任务存在但被禁用时不再误报为已启用，关闭自启时始终执行幂等删除以清理这类任务。
