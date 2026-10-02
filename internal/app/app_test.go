@@ -36,6 +36,20 @@ func TestParseFlagsIncludesProxyHandoff(t *testing.T) {
 	}
 }
 
+func TestParseFlagsReadsAutostartOwner(t *testing.T) {
+	flags := ParseFlags([]string{"-autostart-enable", "-autostart-owner", `PC\someone`})
+	if !flags.AutostartEnable || flags.AutostartOwner != `PC\someone` {
+		t.Fatalf("autostart owner was not read: %+v", flags)
+	}
+	// A missing value must not swallow the next flag or invent an owner.
+	if got := ParseFlags([]string{"-autostart-owner"}); got.AutostartOwner != "" {
+		t.Fatalf("dangling -autostart-owner produced %q", got.AutostartOwner)
+	}
+	if got := ParseFlags([]string{"-autostart-owner", "-autostart-disable"}); got.AutostartOwner != "-autostart-disable" {
+		t.Fatalf("trailing flag was not consumed as the owner: %q", got.AutostartOwner)
+	}
+}
+
 func TestRetryInstanceAcquisitionWaitsForRelease(t *testing.T) {
 	now := time.Time{}
 	attempts := 0

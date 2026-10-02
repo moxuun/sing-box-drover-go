@@ -114,7 +114,7 @@ func QueryAutostart() (AutostartState, error) {
 	return AutostartEnabled, nil
 }
 
-func SetAutostart(enabled bool) error {
+func SetAutostart(enabled bool, owner string) error {
 	if os.Geteuid() == 0 {
 		return errors.New("configure login startup before launching the controller as root")
 	}

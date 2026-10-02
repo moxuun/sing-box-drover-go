@@ -142,7 +142,12 @@ func QueryAutostart() (AutostartState, error) {
 	return AutostartUnknown, err
 }
 
-func SetAutostart(enabled bool) error {
+// SetAutostart registers or removes the logon task. An empty owner means the
+// account running this process; the elevated one-shot helper passes the user
+// that asked for the change instead, because a cross-account UAC prompt would
+// otherwise register the task for the credentials account rather than the user
+// who is actually logged on.
+func SetAutostart(enabled bool, owner string) error {
 	if !enabled {
 		out, err := runTaskScheduler("/Delete", "/TN", taskName, "/F")
 		if err != nil {
@@ -157,14 +162,21 @@ func SetAutostart(enabled bool) error {
 	if err != nil {
 		return err
 	}
-	currentUser, err := user.Current()
-	if err != nil {
-		return fmt.Errorf("resolve current user: %w", err)
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		currentUser, err := user.Current()
+		if err != nil {
+			return fmt.Errorf("resolve current user: %w", err)
+		}
+		owner = strings.TrimSpace(currentUser.Username)
+		if owner == "" {
+			return fmt.Errorf("resolve current user: empty username")
+		}
 	}
-	if strings.TrimSpace(currentUser.Username) == "" {
-		return fmt.Errorf("resolve current user: empty username")
+	if strings.ContainsAny(owner, "\"\r\n") {
+		return fmt.Errorf("resolve current user: invalid username %q", owner)
 	}
-	if out, err := runTaskScheduler(autostartCreateArgs(file, currentUser.Username)...); err != nil {
+	if out, err := runTaskScheduler(autostartCreateArgs(file, owner)...); err != nil {
 		return fmt.Errorf("register task: %w (%s)", err, bytes.TrimSpace(out))
 	}
 	if state, err := QueryAutostart(); err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -38,6 +39,10 @@ type Flags struct {
 	Restart          bool
 	AutostartEnable  bool
 	AutostartDisable bool
+	// AutostartOwner names the account the logon task belongs to. The elevated
+	// one-shot helper runs under whatever account the UAC prompt accepted, which
+	// is not necessarily the user that asked for the change.
+	AutostartOwner string
 }
 
 const (
@@ -56,8 +61,8 @@ const (
 
 func ParseFlags(args []string) Flags {
 	var flags Flags
-	for _, arg := range args {
-		arg = strings.TrimLeft(strings.ToLower(strings.TrimSpace(arg)), "-")
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimLeft(strings.ToLower(strings.TrimSpace(args[i])), "-")
 		switch arg {
 		case "tun":
 			flags.Tun = true
@@ -73,6 +78,11 @@ func ParseFlags(args []string) Flags {
 			flags.AutostartEnable = true
 		case "autostart-disable":
 			flags.AutostartDisable = true
+		case "autostart-owner":
+			if i+1 < len(args) {
+				i++
+				flags.AutostartOwner = strings.TrimSpace(args[i])
+			}
 		}
 	}
 	return flags
@@ -128,7 +138,7 @@ func runAutostartUpdate(logPath string, flags Flags) error {
 	enabled := flags.AutostartEnable
 	logger := logging.New(logPath)
 	defer logger.Close()
-	if err := platform.SetAutostart(enabled); err != nil {
+	if err := platform.SetAutostart(enabled, flags.AutostartOwner); err != nil {
 		logger.Log("Autostart", "autostart update failed: "+err.Error())
 		return fmt.Errorf("autostart update failed: %w", err)
 	}
@@ -138,6 +148,25 @@ func runAutostartUpdate(logPath string, flags Flags) error {
 	}
 	logger.Log("Autostart", "autostart "+status)
 	return ErrAutostartHandled
+}
+
+// currentAccountName reports the account running this process. It is what the
+// autostart task should be registered for: see Flags.AutostartOwner.
+func currentAccountName() string {
+	current, err := user.Current()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(current.Username)
+}
+
+// quoteLaunchArg quotes a value for the raw command-line string LaunchSelf
+// takes. Account names rarely contain spaces, but a local account may.
+func quoteLaunchArg(value string) string {
+	if !strings.ContainsAny(value, " \t") {
+		return value
+	}
+	return `"` + strings.ReplaceAll(value, `"`, "") + `"`
 }
 
 // retryInstanceAcquisition keeps the restart handoff bounded while allowing
@@ -837,6 +866,11 @@ func (a *App) LaunchAutostartElevated(enabled bool) error {
 	if !enabled {
 		flags = "-autostart-disable"
 	}
+	// The helper runs under the account the UAC prompt accepted, so it has to be
+	// told which user the task is for.
+	if owner := currentAccountName(); owner != "" {
+		flags += " -autostart-owner " + quoteLaunchArg(owner)
+	}
 	launch := a.selfLauncher
 	if launch == nil {
 		launch = platform.LaunchSelf
@@ -880,7 +914,7 @@ func (a *App) SetAutostart(enabled bool) error {
 	if platform.AutostartRequiresElevation() && !platform.IsProcessElevated() {
 		return platform.ErrElevationRequired
 	}
-	return platform.SetAutostart(enabled)
+	return platform.SetAutostart(enabled, "")
 }
 
 func (a *App) Close() error {

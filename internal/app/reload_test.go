@@ -263,13 +263,21 @@ func TestAutostartHandoffLaunchesOneShotHelper(t *testing.T) {
 			if err := a.LaunchAutostartElevated(test.enabled); err != nil {
 				t.Fatalf("LaunchAutostartElevated() error = %v", err)
 			}
-			if launchedFlags != test.wantFlag {
-				t.Fatalf("autostart helper flags = %q, want %q", launchedFlags, test.wantFlag)
+			if !strings.HasPrefix(launchedFlags, test.wantFlag) {
+				t.Fatalf("autostart helper flags = %q, want prefix %q", launchedFlags, test.wantFlag)
 			}
 			// The helper only writes the scheduled task, so it must neither take
 			// over this controller nor disturb the system proxy it still manages:
 			// a helper that never starts a core could not bring the proxy back.
 			parsed := ParseFlags(strings.Fields(launchedFlags))
+			if parsed.AutostartEnable != test.enabled || parsed.AutostartDisable != !test.enabled {
+				t.Fatalf("autostart helper flags = %q, want %q", launchedFlags, test.wantFlag)
+			}
+			// It runs under the account the UAC prompt accepted, so it has to be
+			// told which account the task belongs to.
+			if parsed.AutostartOwner == "" {
+				t.Fatalf("autostart helper was not told which account owns the task: %q", launchedFlags)
+			}
 			if parsed.Restart || parsed.Tun || parsed.NoTun || parsed.Proxy || parsed.NoProxy {
 				t.Fatalf("autostart helper would take over the controller: %+v", parsed)
 			}

@@ -96,7 +96,7 @@ func TestSetAutostartDisableIsIdempotentWhenTaskIsMissing(t *testing.T) {
 	if state != AutostartDisabled {
 		t.Skip("the fixed task exists; leave it unchanged in this read-only test")
 	}
-	if err := SetAutostart(false); err != nil {
+	if err := SetAutostart(false, ""); err != nil {
 		t.Fatalf("SetAutostart(false) with no task: %v", err)
 	}
 }

@@ -10,5 +10,5 @@ const (
 	AutostartEnabled
 )
 
-func QueryAutostart() (AutostartState, error) { return AutostartUnknown, ErrUnsupported }
-func SetAutostart(enabled bool) error         { return ErrUnsupported }
+func QueryAutostart() (AutostartState, error)       { return AutostartUnknown, ErrUnsupported }
+func SetAutostart(enabled bool, owner string) error { return ErrUnsupported }

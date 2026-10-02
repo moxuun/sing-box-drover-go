@@ -32,7 +32,7 @@ func TestSetAndQueryAutostart(t *testing.T) {
 	if state, err := QueryAutostart(); err != nil || state != AutostartDisabled {
 		t.Fatalf("initial state = %v, err=%v", state, err)
 	}
-	if err := SetAutostart(true); err != nil {
+	if err := SetAutostart(true, ""); err != nil {
 		t.Fatal(err)
 	}
 	if state, err := QueryAutostart(); err != nil || state != AutostartEnabled {
@@ -42,7 +42,7 @@ func TestSetAndQueryAutostart(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("launch agent was not installed: %v", err)
 	}
-	if err := SetAutostart(false); err != nil {
+	if err := SetAutostart(false, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
