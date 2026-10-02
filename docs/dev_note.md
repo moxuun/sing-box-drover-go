@@ -57,11 +57,13 @@
 - `已完成` `WM_QUERYENDSESSION` 只回答是否允许结束会话（返回 TRUE），不再关闭控制器；只有确认收到 `WM_ENDSESSION` 且 `wParam != 0` 时才执行关闭。取消关机或注销后托盘、内核和系统代理都保持可用。
 - `待实机验证` 需要在真实环境确认：发起注销或关机后取消，托盘仍能切换代理、重启内核和退出。
 - `已完成` 修复内核启动 750ms 计时器与退出协程的竞态：状态发布统一由 `publishState` 在 `publishMu` 下完成，`promoteToRunning` 只在代次未变、进程仍在、状态仍为 Starting 时才发布 Running。已退出的内核不会再被标记为运行中，也就不会开启指向已退出内核的系统代理。
-- `待实机验证` 需要在真实环境确认时序：让内核在启动宽限期附近退出（例如配置错误使内核延迟失败），确认托盘最终显示失败/停止而不是运行中，且系统代理保持关闭。回归测试目前只覆盖「进程已清空时拒绝提升」的条件本身，没有复现真实时序。
+- `已完成` 用真机进程复现了该竞态：临时复现台用一个假 `sing-box.exe`（读掉 stdin、睡到指定毫秒后 `exit 3`）驱动真实 `core.Supervisor`，扫描 750ms 宽限期边界。真实窗口在「发布终态 → 通知 Start 协程」之间，只有亚微秒级：未改动的代码扫描 144 次 0 次违规，即这个交错难以在实机自然命中。把该窗口人为拉宽到 10ms 后，修复前 22/168 次违规（事件序列 `starting -> failed -> running`，且 `Start` 返回 nil），修复后 0/168。复现台建在临时目录，未进入仓库。
+- `待实机验证` 仍需在真实 Windows 托盘层面确认最终显示：让内核在宽限期内失败（例如配置错误），确认托盘落到失败/停止而不是运行中，且系统代理保持关闭。
 - `已完成` 替换实例的等待预算不再固定为 10 秒，而是由 `core.StopGracePeriod` + `core.StopCleanupWait` + 5 秒余量导出，覆盖旧实例完整关闭预算；交接超时也不再作为普通重复启动静默退出，而是返回 `ErrRestartHandoff` 并提示用户重新启动。
 - `待实机验证` 需要在真实环境确认：在旧实例需要走满优雅停止窗口时点击重启内核，确认新实例能完成交接而不是两边都退出。
 - `设计待决定` 本次 Windows 调用链审计发现替代进程交接只传递开启状态，没有显式关闭参数：当 INI 的 `tun-start-mode` 或 `system-proxy-auto` 为 on，用户手动关闭后再点重启（或触发提权交接），新实例会重新应用启动默认值，不能保持当前关闭状态；尚未修改，需补齐交接状态语义。
-- `设计待决定` 本次审计发现睡眠恢复把 HTTP 客户端自身的请求超时也按 `context.DeadlineExceeded` 当作恢复上下文结束：即使外层 10 秒预算未耗尽，连续 API 超时后仍会直接返回而不重启失效内核；应区分调用方 `ctx.Err()` 与单次 HTTP 超时，尚未修改或实机验证。
+- `已完成` 睡眠恢复不再把 Clash API 客户端自身的请求超时当作恢复上下文结束：Clash 客户端有 1 秒请求超时，超时错误会包裹 `context.DeadlineExceeded`，无法与恢复预算用尽区分。新增 `resumeProbeEndedRecovery` 只判断调用方 `ctx.Err()`，因此连续 API 超时后仍会重启失效内核，只有恢复上下文真的结束才提前返回。新增 `TestResumeProbeEndedRecovery` 固定该判断。
+- `待实机验证` 需要在真实睡眠唤醒后确认：内核唤醒后 API 持续无响应（例如内核假死），控制器最终重启内核并恢复选择器，而不是直接返回错误。
 
 - `已完成` 内核由控制器拥有并监控，启动时收集有上限的标准输出/错误输出，异常退出时报告 `FATAL` 等立即诊断信息。
 - `已完成` Windows 优雅关闭信号发送失败时不再无谓等待完整 10 秒，而是立即走 Job Object/进程强制清理；信号发送成功时仍保留原有优雅等待窗口。
@@ -82,6 +84,8 @@
 - `待实机验证` 仍需在真实睡眠/唤醒周期中观察 API 短暂不可用、内核真实退出和托盘提示，确认重试窗口覆盖实际恢复时间且不会掩盖真正故障。
 
 ### Windows 代理与 Discord 问题
+
+- `设计待决定` 已核对成熟客户端公开分支源码：v2rayN 的 `AppExitAsync` 调用 `UpdateSysProxy(config, true)`，除 Unchanged 模式外转 ForcedClear，Windows `UnsetProxy()` 设置 DIRECT；Clash Verge Rev 的 `update_sysproxy` 关闭分支和 `reset_sysproxy` 将全局代理与 PAC 关闭，并非恢复接管前快照。因此“退出必须恢复旧代理”不是通用正确标准，恢复失效旧端口也可能导致断网；本项目清理与恢复策略需单独决定，本次仅研究、不修改代理实现。来源：[v2rayN SysProxyHandler](https://github.com/2dust/v2rayN/blob/master/v2rayN/ServiceLib/Handler/SysProxy/SysProxyHandler.cs)、[AppManager](https://github.com/2dust/v2rayN/blob/master/v2rayN/ServiceLib/Manager/AppManager.cs)、[ProxySettingWindows](https://github.com/2dust/v2rayN/blob/master/v2rayN/ServiceLib/Handler/SysProxy/ProxySettingWindows.cs)、[Clash Verge Rev sysopt](https://github.com/clash-verge-rev/clash-verge-rev/blob/main/src-tauri/src/core/sysopt.rs)。结论仅针对本次读取的分支实现，非所有发行版本的实机验证。
 
 - `已完成` 修复残留代理识别只比较主机、不比较端口的问题：`restoreTarget` 与 `proxyAddressMatch` 现在要求完整的 `host:port` 与本次写入的地址一致，才认定原状态是本程序自己的残留。用户原有的其他 `127.0.0.1:<port>` 本地代理不再被误认，关闭代理或退出时会原样恢复；原先把同主机不同端口判为匹配的测试已改为拒绝。已知残留：用户改了配置里的 mixed 监听端口后，上一轮留下的旧端口代理不再被识别，那个场景仍会回写残留状态，本轮未处理。
 - `待实机验证` 需要在真实环境确认：先让其他程序把系统代理设为 `127.0.0.1:7890`，再用本程序开启并关闭代理，确认结束时代理被还原为 `127.0.0.1:7890` 而不是被关闭。
