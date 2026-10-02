@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -33,9 +34,11 @@ type ClashAPIConfig struct {
 func (c ClashAPIConfig) IsConfigured() bool { return strings.TrimSpace(c.ExternalController) != "" }
 
 type SingBoxConfig struct {
-	ClashAPI       ClashAPIConfig
-	Selectors      []Selector
-	HasSelector    bool
+	ClashAPI    ClashAPIConfig
+	Selectors   []Selector
+	HasSelector bool
+	// ProxyHost and ProxyPort address the mixed inbound the way a local client
+	// has to reach it, which is not always how the inbound listens.
 	ProxyHost      string
 	ProxyPort      int
 	HasTunInbound  bool
@@ -303,6 +306,25 @@ func parseJSON(text string) (map[string]any, error) {
 	return obj, nil
 }
 
+// clientHost returns the address a local client has to connect to in order to
+// reach a mixed inbound listening on listen.
+//
+// A wildcard listen address accepts connections on every interface, but it is
+// not a valid destination: the system proxy cannot point at 0.0.0.0 or ::.
+// Loopback reaches the same listener, so that is what clients get.
+func clientHost(listen string) string {
+	host := strings.TrimSpace(listen)
+	host = strings.TrimPrefix(host, "[")
+	host = strings.TrimSuffix(host, "]")
+	if host == "*" {
+		return "127.0.0.1"
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		return "127.0.0.1"
+	}
+	return host
+}
+
 func ReadSingBoxConfig(text string) (SingBoxConfig, error) {
 	root, err := parseJSON(text)
 	if err != nil {
@@ -318,7 +340,7 @@ func ReadSingBoxConfig(text string) (SingBoxConfig, error) {
 			typ := valueString(obj["type"])
 			switch {
 			case strings.EqualFold(typ, "mixed"):
-				cfg.ProxyHost = valueString(obj["listen"])
+				cfg.ProxyHost = clientHost(valueString(obj["listen"]))
 				port, _ := strconv.Atoi(valueString(obj["listen_port"]))
 				cfg.ProxyPort = port
 			case strings.EqualFold(typ, "tun"):

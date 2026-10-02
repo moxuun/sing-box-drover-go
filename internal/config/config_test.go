@@ -1,8 +1,10 @@
 package config
 
 import (
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -138,5 +140,39 @@ func TestCheckSingBoxConfigRejectsBlankProxyHost(t *testing.T) {
 func TestCheckSingBoxConfigRejectsNULProxyHost(t *testing.T) {
 	if err := CheckSingBoxConfig(SingBoxConfig{ProxyHost: "127.0.0.1\x00", ProxyPort: 1080}); err == nil {
 		t.Fatal("mixed inbound host containing NUL was accepted")
+	}
+}
+
+func TestClientHostReplacesWildcardListen(t *testing.T) {
+	cases := map[string]string{
+		"::":        "127.0.0.1",
+		"0.0.0.0":   "127.0.0.1",
+		"*":         "127.0.0.1",
+		"[::]":      "127.0.0.1",
+		"127.0.0.1": "127.0.0.1",
+		"::1":       "::1",
+		"localhost": "localhost",
+	}
+	for listen, want := range cases {
+		if got := clientHost(listen); got != want {
+			t.Errorf("clientHost(%q) = %q, want %q", listen, got, want)
+		}
+	}
+}
+
+func TestReadSingBoxConfigUsesClientReachableHost(t *testing.T) {
+	input := `{"inbounds":[{"type":"mixed","listen":"::","listen_port":7890}]}`
+	cfg, err := ReadSingBoxConfig(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ProxyHost != "127.0.0.1" {
+		t.Fatalf("wildcard listen was kept as proxy host: %q", cfg.ProxyHost)
+	}
+	if err := CheckSingBoxConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := net.JoinHostPort(cfg.ProxyHost, strconv.Itoa(cfg.ProxyPort)); got != "127.0.0.1:7890" {
+		t.Fatalf("system proxy target = %q, want 127.0.0.1:7890", got)
 	}
 }
