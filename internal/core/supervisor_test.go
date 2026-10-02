@@ -145,3 +145,38 @@ func TestSupervisorReportsUnexpectedExitWithBoundedDiagnostics(t *testing.T) {
 		t.Fatalf("missing crash output: %q", output)
 	}
 }
+
+func TestPromoteToRunningRefusesExitedProcess(t *testing.T) {
+	supervisor := NewSupervisor("sing-box.exe", nil)
+	setStarting := func(gen uint64, process *os.Process) {
+		supervisor.mu.Lock()
+		supervisor.state = StateStarting
+		supervisor.gen = gen
+		supervisor.process = process
+		supervisor.mu.Unlock()
+	}
+
+	setStarting(7, &os.Process{Pid: 1})
+	if !supervisor.promoteToRunning(7) {
+		t.Fatal("a live process was not promoted to running")
+	}
+	if state := supervisor.State(); state != StateRunning {
+		t.Fatalf("state = %v, want running", state)
+	}
+
+	// The exit goroutine clears the process fields before it publishes the
+	// terminal state, so a promotion arriving afterwards must not resurrect the
+	// process: the tray would then report a core that is already gone.
+	setStarting(7, nil)
+	if supervisor.promoteToRunning(7) {
+		t.Fatal("a process that already exited was promoted to running")
+	}
+	if state := supervisor.State(); state != StateStarting {
+		t.Fatalf("state = %v, want the starting state left untouched", state)
+	}
+
+	setStarting(7, &os.Process{Pid: 1})
+	if supervisor.promoteToRunning(8) {
+		t.Fatal("a promotion for a replaced generation was accepted")
+	}
+}

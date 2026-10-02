@@ -76,7 +76,10 @@ func (b *boundedBuffer) String() string {
 }
 
 type Supervisor struct {
-	mu            sync.Mutex
+	mu sync.Mutex
+	// publishMu serializes storing a state and delivering its event so a
+	// transition can never be reported after a later one that contradicts it.
+	publishMu     sync.Mutex
 	exePath       string
 	logger        *logging.Logger
 	cmd           *exec.Cmd
@@ -156,9 +159,36 @@ func (s *Supervisor) Check(configJSON string) error {
 }
 
 func (s *Supervisor) setState(state State, message string) {
+	s.publishState(func() bool { return true }, state, message)
+}
+
+// publishState applies mutate, stores the resulting state and delivers the
+// matching event as one unit. mutate runs under the supervisor lock and reports
+// whether the transition happened; when it does not, nothing is stored or
+// delivered.
+//
+// Serializing publication is what keeps a startup promotion from notifying
+// "running" after the exit goroutine already notified "stopped", which would
+// leave the tray describing a core that is gone.
+func (s *Supervisor) publishState(mutate func() bool, state State, message string) bool {
+	s.publishMu.Lock()
+	defer s.publishMu.Unlock()
 	s.mu.Lock()
-	s.state = state
+	changed := mutate()
+	if changed {
+		s.state = state
+	}
 	s.mu.Unlock()
+	if !changed {
+		return false
+	}
+	s.publishLocked(state, message)
+	return true
+}
+
+// publishLocked delivers a state that is already stored. Callers must hold
+// publishMu and must not hold the supervisor lock.
+func (s *Supervisor) publishLocked(state State, message string) {
 	if s.logger != nil {
 		s.logger.Log("Core", strings.TrimSpace(message))
 	}
@@ -219,9 +249,24 @@ func (s *Supervisor) Start(configJSON string) error {
 		}
 		return errors.New(message)
 	case <-timer.C:
-		s.setState(StateRunning, "sing-box running")
+		if !s.promoteToRunning(gen) {
+			// The process exited while the timer was pending. Its exit goroutine
+			// already published the final state and the detailed message.
+			return errors.New("sing-box stopped during startup")
+		}
 		return nil
 	}
+}
+
+// promoteToRunning reports whether gen could be promoted to StateRunning.
+//
+// The exit goroutine clears the process fields before it publishes the terminal
+// state, so a process that already exited is always refused here instead of
+// being reported as running afterwards.
+func (s *Supervisor) promoteToRunning(gen uint64) bool {
+	return s.publishState(func() bool {
+		return gen == s.gen && s.process != nil && s.state == StateStarting
+	}, StateRunning, "sing-box running")
 }
 
 func (s *Supervisor) wait(gen uint64, cmd *exec.Cmd, done chan struct{}, startupExit chan<- error) {
@@ -325,11 +370,15 @@ func (s *Supervisor) Stop(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	s.publishMu.Lock()
 	s.mu.Lock()
 	process := s.process
 	done := s.done
 	if process == nil {
 		s.mu.Unlock()
+		// Release the publication lock before waiting: the exit goroutine
+		// publishes the final state during that wait.
+		s.publishMu.Unlock()
 		// The wait goroutine clears process just before publishing done. Wait
 		// for that publication so a concurrent Start cannot race the previous
 		// process's final state notification.
@@ -345,7 +394,8 @@ func (s *Supervisor) Stop(ctx context.Context) error {
 	s.state = StateStopping
 	s.stopRequested = true
 	s.mu.Unlock()
-	s.notify(Event{Kind: EventState, State: StateStopping, Message: "stopping sing-box"})
+	s.publishLocked(StateStopping, "stopping sing-box")
+	s.publishMu.Unlock()
 
 	cleanup, signalErr := requestGracefulStop(process)
 	if signalErr != nil && s.logger != nil {
