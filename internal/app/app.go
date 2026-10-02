@@ -620,6 +620,21 @@ func (a *App) Restart() error {
 	return a.launchReplacement(flags, platform.IsProcessElevated())
 }
 
+// resumeProbeEndedRecovery reports whether a failed resume probe should stop
+// the recovery instead of restarting sing-box.
+//
+// Only the recovery context itself ending stops it. The probe error alone
+// cannot decide this: the Clash API client has its own request timeout, and a
+// request that times out surfaces as a wrapped context.DeadlineExceeded, which
+// is indistinguishable from an expired recovery context. An API that stays
+// unreachable after resume is exactly the case that has to restart sing-box.
+func resumeProbeEndedRecovery(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	return ctx != nil && ctx.Err() != nil
+}
+
 func probeResumeAPI(ctx context.Context, api *clash.Client, attempts int, interval time.Duration) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -697,8 +712,8 @@ func (a *App) RecoverAfterResume(ctx context.Context) error {
 		}
 		if err := probeResumeAPI(ctx, api, resumeAPIProbeAttempts, resumeAPIProbeInterval); err == nil {
 			return nil
-		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return err
+		} else if resumeProbeEndedRecovery(ctx, err) {
+			return ctx.Err()
 		} else if logger != nil {
 			logger.Log("Resume", "Clash API remained unavailable after resume probes; restarting sing-box: "+err.Error())
 		}

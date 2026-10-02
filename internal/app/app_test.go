@@ -619,3 +619,32 @@ func TestClosedControllerRejectsLifecycleAndSelectorOperations(t *testing.T) {
 		t.Fatal("closed controller launched a replacement")
 	}
 }
+
+func TestResumeProbeEndedRecovery(t *testing.T) {
+	requestTimeout := errors.Join(errors.New(`Get "http://127.0.0.1:9090/proxies": request canceled`), context.DeadlineExceeded)
+	expired, cancelExpired := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelExpired()
+	live, cancelLive := context.WithDeadline(context.Background(), time.Now().Add(time.Minute))
+	defer cancelLive()
+	cancelled, cancelCancelled := context.WithCancel(context.Background())
+	cancelCancelled()
+
+	cases := []struct {
+		name string
+		ctx  context.Context
+		err  error
+		want bool
+	}{
+		{"no probe error", context.Background(), nil, false},
+		{"request timeout under a live recovery context", live, requestTimeout, false},
+		{"request timeout without a recovery deadline", context.Background(), requestTimeout, false},
+		{"request timeout without a recovery context", nil, requestTimeout, false},
+		{"expired recovery context", expired, context.DeadlineExceeded, true},
+		{"cancelled recovery context", cancelled, context.Canceled, true},
+	}
+	for _, tc := range cases {
+		if got := resumeProbeEndedRecovery(tc.ctx, tc.err); got != tc.want {
+			t.Errorf("%s: resumeProbeEndedRecovery = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
