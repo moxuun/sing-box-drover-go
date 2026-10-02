@@ -198,57 +198,14 @@ func EnableSystemProxy(host string, port int) (ProxySession, error) {
 	desired.flags = proxyTypeDirect | proxyTypeProxy
 	desired.server = "http://" + net.JoinHostPort(host, fmt.Sprint(port))
 	desired.bypass = "<local>"
-	restore := restoreTarget(original, host)
 	if err := setProxySettings(desired); err != nil {
 		return ProxySession{}, err
 	}
 	applied, err := queryProxySettings()
 	if err != nil {
-		return ProxySession{}, restoreAfterProxyVerificationFailure(restore, err, setProxySettings)
+		return ProxySession{}, restoreAfterProxyVerificationFailure(original, err, setProxySettings)
 	}
-	return ProxySession{original: restore, applied: applied}, nil
-}
-
-// restoreTarget returns the settings a release has to write back.
-//
-// A controller that was killed, crashed or replaced stops restoring its
-// session, so it leaves the system proxy pointing at its own listen address.
-// The next run captures that leftover as the original settings, and restoring
-// it would keep the proxy enabled at an address that no longer listens. In
-// that case the proxy is turned off instead. A proxy belonging to the user
-// still points somewhere else and is preserved.
-func restoreTarget(original proxySettings, host string) proxySettings {
-	if original.flags&proxyTypeProxy == 0 || !proxyHostsMatch(original.server, host) {
-		return original
-	}
-	original.flags = (original.flags &^ proxyTypeProxy) | proxyTypeDirect
-	return original
-}
-
-// proxyHostsMatch reports whether every server in a WinINet proxy server value
-// addresses host. Entries are "host:port" with an optional "scheme=" or
-// "scheme://" prefix.
-func proxyHostsMatch(server, host string) bool {
-	entries := strings.FieldsFunc(server, func(r rune) bool { return r == ';' || r == ',' })
-	if len(entries) == 0 {
-		return false
-	}
-	for _, entry := range entries {
-		if _, value, found := strings.Cut(entry, "="); found {
-			entry = value
-		}
-		if _, value, found := strings.Cut(entry, "://"); found {
-			entry = value
-		}
-		entryHost, _, err := net.SplitHostPort(entry)
-		if err != nil {
-			entryHost = entry
-		}
-		if !strings.EqualFold(strings.TrimSpace(entryHost), host) {
-			return false
-		}
-	}
-	return true
+	return ProxySession{original: original, applied: applied}, nil
 }
 
 // RestoreSystemProxy restores the captured settings only while WinINet still
