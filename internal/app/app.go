@@ -20,6 +20,10 @@ import (
 var (
 	ErrAlreadyRunning   = errors.New("sing-box-drover is already running")
 	ErrElevationHandoff = errors.New("elevated sing-box-drover instance launched")
+	// ErrRestartHandoff is not a duplicate start. The running instance asked for
+	// a replacement and never released the single instance, so reporting it as a
+	// plain duplicate would exit silently and leave nothing running.
+	ErrRestartHandoff   = errors.New("the previous instance did not stop in time; start sing-box-drover again")
 	errControllerClosed = errors.New("controller is closed")
 )
 
@@ -32,7 +36,11 @@ type Flags struct {
 }
 
 const (
-	restartInstanceWait     = 10 * time.Second
+	// A restart replacement has to outlast the complete close budget of the
+	// instance it replaces. While this was a fixed 10s the handoff could expire
+	// while the old instance was still stopping, and the user was left with
+	// neither a core nor a tray.
+	restartInstanceWait     = core.StopGracePeriod + core.StopCleanupWait + 5*time.Second
 	restartInstanceInterval = 50 * time.Millisecond
 	resumeAPIProbeAttempts  = 5
 	resumeAPIProbeInterval  = 750 * time.Millisecond
@@ -184,23 +192,19 @@ func NewAt(executable string, args []string) (*App, error) {
 		return nil, err
 	}
 	if !first {
-		if flags.Restart {
-			if instance != nil {
-				instance.Close()
-			}
-			instance, first, err = retryInstanceAcquisition(acquire, restartInstanceWait, restartInstanceInterval, nil, nil)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			if instance != nil {
-				instance.Close()
-			}
+		if instance != nil {
+			instance.Close()
+		}
+		if !flags.Restart {
 			return nil, ErrAlreadyRunning
 		}
-	}
-	if !first {
-		return nil, ErrAlreadyRunning
+		instance, first, err = retryInstanceAcquisition(acquire, restartInstanceWait, restartInstanceInterval, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		if !first {
+			return nil, ErrRestartHandoff
+		}
 	}
 	logger := logging.New(options.LogFile)
 	source, sbConfig, err := config.ReadValidatedConfig(options.SBConfigFile)

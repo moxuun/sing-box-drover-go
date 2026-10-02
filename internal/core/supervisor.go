@@ -18,6 +18,14 @@ const MaxCapturedOutput = 8 << 10
 const startupGracePeriod = 750 * time.Millisecond
 const configCheckTimeout = 30 * time.Second
 
+// StopGracePeriod bounds how long a stop waits for sing-box to exit on its own
+// before the process is killed.
+const StopGracePeriod = 10 * time.Second
+
+// StopCleanupWait bounds the wait for the exit goroutine to release its process
+// and job handles after the process is gone.
+const StopCleanupWait = time.Second
+
 type State int
 
 const (
@@ -290,14 +298,14 @@ func waitForStopCompletion(cleanup func(), done <-chan struct{}, ctx context.Con
 	// bounded wait keeps shutdown responsive even if an OS API misbehaves.
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(StopCleanupWait):
 		// The wait goroutine still owns the process handle. Leave it to finish
 		// rather than touching a handle that could be reused by a new process.
 	}
 }
 
 func stopWaitDuration(ctx context.Context, signalErr error) time.Duration {
-	wait := 10 * time.Second
+	wait := StopGracePeriod
 	if signalErr != nil {
 		wait = 0
 	}
