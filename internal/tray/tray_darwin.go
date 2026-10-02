@@ -81,7 +81,7 @@ func (t *Tray) onReady() {
 		t.autostartEnabled = state == platform.AutostartEnabled
 	}
 	t.rebuildMenu(t.controller.Selectors())
-	if t.controller.Options().SystemProxyAuto || t.controller.Flags().Proxy {
+	if t.controller.StartupProxyRequested() {
 		if err := t.controller.EnableSystemProxy(); err != nil {
 			t.setFault(true)
 			t.notify("sing-box-drover", "System proxy could not be enabled: "+err.Error())

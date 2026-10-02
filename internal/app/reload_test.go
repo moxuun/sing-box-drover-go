@@ -251,7 +251,9 @@ func TestAutostartHandoffPreservesActiveTun(t *testing.T) {
 	if err := a.LaunchAutostartElevated(true); err != nil {
 		t.Fatalf("LaunchAutostartElevated() error = %v", err)
 	}
-	if launchedFlags != "-restart -tun -autostart-enable" {
+	// The proxy was never active, so the replacement is told to keep it off
+	// rather than left to fall back to the configured automatic proxy.
+	if launchedFlags != "-restart -tun -autostart-enable -no-proxy" {
 		t.Fatalf("autostart replacement flags = %q", launchedFlags)
 	}
 }

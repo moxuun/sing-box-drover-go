@@ -30,6 +30,8 @@ var (
 type Flags struct {
 	Tun              bool
 	Proxy            bool
+	NoTun            bool
+	NoProxy          bool
 	Restart          bool
 	AutostartEnable  bool
 	AutostartDisable bool
@@ -58,6 +60,10 @@ func ParseFlags(args []string) Flags {
 			flags.Tun = true
 		case "proxy":
 			flags.Proxy = true
+		case "no-tun":
+			flags.NoTun = true
+		case "no-proxy":
+			flags.NoProxy = true
 		case "restart":
 			flags.Restart = true
 		case "autostart-enable":
@@ -69,12 +75,43 @@ func ParseFlags(args []string) Flags {
 	return flags
 }
 
+// startupTunRequested reports whether this instance should start with TUN.
+// A handoff passes an explicit choice so the replacement keeps the state the
+// user was last running with; the configured start mode is only the default
+// for a fresh start. Without the explicit "off" flag a restart would switch
+// TUN back on after the user turned it off while the configuration still asks
+// for it.
 func startupTunRequested(sbConfig config.SingBoxConfig, options config.Options, flags Flags) bool {
+	if flags.NoTun {
+		return false
+	}
 	return sbConfig.HasTunInbound && (flags.Tun || options.TunStartMode == "on")
 }
 
+// startupProxyRequested reports whether this instance should bring the system
+// proxy up, with the same explicit handoff rule as TUN.
 func startupProxyRequested(options config.Options, flags Flags) bool {
+	if flags.NoProxy {
+		return false
+	}
 	return options.SystemProxyAuto || flags.Proxy
+}
+
+// handoffTunFlags and handoffProxyFlags describe a feature state for a
+// replacement controller. Both always emit an explicit choice: passing nothing
+// would let the replacement fall back to the configured start mode.
+func handoffTunFlags(active bool) string {
+	if active {
+		return " -tun"
+	}
+	return " -no-tun"
+}
+
+func handoffProxyFlags(active bool) string {
+	if active {
+		return " -proxy"
+	}
+	return " -no-proxy"
 }
 
 // retryInstanceAcquisition keeps the restart handoff bounded while allowing
@@ -429,6 +466,14 @@ func (a *App) Options() config.Options { return a.options }
 func (a *App) Flags() Flags            { return a.flags }
 func (a *App) Events() <-chan Event    { return a.events }
 
+// StartupProxyRequested reports whether this instance should bring the system
+// proxy up. The tray asks the controller instead of recomputing the condition,
+// which is how a handoff that explicitly asked for "off" used to be overruled
+// at startup by the configured default.
+func (a *App) StartupProxyRequested() bool {
+	return startupProxyRequested(a.options, a.flags)
+}
+
 func (a *App) ensureOpen() error {
 	a.mu.RLock()
 	closed := a.closed
@@ -613,11 +658,8 @@ func (a *App) Restart() error {
 	if _, err := a.checkConfigCandidate(tun, false); err != nil {
 		return err
 	}
-	flags := "-restart"
-	if tun {
-		flags += " -tun"
-	}
-	return a.launchReplacement(flags, platform.IsProcessElevated())
+	flags := "-restart" + handoffTunFlags(tun)
+	return a.launchReplacement(flags, platform.IsProcessElevated(), a.SystemProxyActive())
 }
 
 // resumeProbeEndedRecovery reports whether a failed resume probe should stop
@@ -753,14 +795,8 @@ func (a *App) launchElevatedLocked(tun, proxy, requireTun bool) error {
 	if err != nil {
 		return err
 	}
-	flags := "-restart"
-	if candidate.tun {
-		flags += " -tun"
-	}
-	if proxy {
-		flags += " -proxy"
-	}
-	return a.launchReplacement(flags, true)
+	flags := "-restart" + handoffTunFlags(candidate.tun)
+	return a.launchReplacement(flags, true, proxy)
 }
 
 func (a *App) QueryAutostart() (platform.AutostartState, error) { return platform.QueryAutostart() }
@@ -774,28 +810,27 @@ func (a *App) LaunchAutostartElevated(enabled bool) error {
 	if _, err := a.checkConfigCandidate(tun, false); err != nil {
 		return err
 	}
-	flags := "-restart"
-	if tun {
-		flags += " -tun"
-	}
+	flags := "-restart" + handoffTunFlags(tun)
 	if enabled {
 		flags += " -autostart-enable"
 	} else {
 		flags += " -autostart-disable"
 	}
-	return a.launchReplacement(flags, true)
+	return a.launchReplacement(flags, true, a.SystemProxyActive())
 }
 
-func (a *App) launchReplacement(flags string, elevated bool) error {
+func (a *App) launchReplacement(flags string, elevated bool, wantProxy bool) error {
 	a.proxyMu.Lock()
 	proxyRestored, proxyErr := a.restoreSystemProxyLocked()
 	a.proxyMu.Unlock()
 	if proxyErr != nil {
 		return fmt.Errorf("prepare system proxy handoff: %w", proxyErr)
 	}
-	if proxyRestored {
-		flags += " -proxy"
-	}
+	// The replacement has to end up with the proxy in the state the user was
+	// actually running with. wantProxy carries that intent when the caller
+	// already knows it, which is a first start that needs elevation and has
+	// nothing active yet; otherwise the state just handed back is the answer.
+	flags += handoffProxyFlags(proxyRestored || wantProxy)
 	launch := a.selfLauncher
 	if launch == nil {
 		launch = platform.LaunchSelf

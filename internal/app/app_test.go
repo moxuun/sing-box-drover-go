@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -21,6 +22,17 @@ func TestParseFlagsIncludesProxyHandoff(t *testing.T) {
 	flags := ParseFlags([]string{"-restart", "-tun", "-proxy"})
 	if !flags.Restart || !flags.Tun || !flags.Proxy {
 		t.Fatalf("handoff flags were not preserved: %+v", flags)
+	}
+	if flags.NoTun || flags.NoProxy {
+		t.Fatalf("enabling flags were read as explicit disabling flags: %+v", flags)
+	}
+
+	disabled := ParseFlags([]string{"-restart", "-no-tun", "-no-proxy"})
+	if !disabled.Restart || !disabled.NoTun || !disabled.NoProxy {
+		t.Fatalf("explicit off flags were not preserved: %+v", disabled)
+	}
+	if disabled.Tun || disabled.Proxy {
+		t.Fatalf("disabling flags were read as enabling flags: %+v", disabled)
 	}
 }
 
@@ -96,6 +108,8 @@ func TestStartupTunRequested(t *testing.T) {
 		{name: "command line flag", config: config.SingBoxConfig{HasTunInbound: true}, flags: Flags{Tun: true}, want: true},
 		{name: "no tun inbound", options: config.Options{TunStartMode: "on"}, want: false},
 		{name: "disabled", config: config.SingBoxConfig{HasTunInbound: true}, options: config.Options{TunStartMode: "off"}, want: false},
+		{name: "explicit off overrides the configured start mode", config: config.SingBoxConfig{HasTunInbound: true}, options: config.Options{TunStartMode: "on"}, flags: Flags{NoTun: true}, want: false},
+		{name: "explicit off overrides the handoff flag", config: config.SingBoxConfig{HasTunInbound: true}, options: config.Options{TunStartMode: "on"}, flags: Flags{Tun: true, NoTun: true}, want: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -116,6 +130,8 @@ func TestStartupProxyRequested(t *testing.T) {
 		{name: "configured automatic proxy", options: config.Options{SystemProxyAuto: true}, want: true},
 		{name: "manual proxy handoff", flags: Flags{Proxy: true}, want: true},
 		{name: "disabled", options: config.Options{SystemProxyAuto: false}, want: false},
+		{name: "explicit off overrides the configured automatic proxy", options: config.Options{SystemProxyAuto: true}, flags: Flags{NoProxy: true}, want: false},
+		{name: "explicit off overrides the handoff flag", options: config.Options{SystemProxyAuto: true}, flags: Flags{Proxy: true, NoProxy: true}, want: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -546,7 +562,7 @@ func TestReplacementHandoffPreservesActiveSystemProxy(t *testing.T) {
 		},
 	}
 
-	if err := a.launchReplacement("-restart -tun", true); err != nil {
+	if err := a.launchReplacement("-restart -tun", true, false); err != nil {
 		t.Fatalf("launchReplacement() error = %v", err)
 	}
 	if restored != 1 {
@@ -575,7 +591,7 @@ func TestReplacementLaunchFailureReenablesSystemProxy(t *testing.T) {
 		selfLauncher: func(string, bool) error { return launchErr },
 	}
 
-	err := a.launchReplacement("-restart", false)
+	err := a.launchReplacement("-restart", false, false)
 	if !errors.Is(err, launchErr) {
 		t.Fatalf("launchReplacement() error = %v, want %v", err, launchErr)
 	}
@@ -646,5 +662,63 @@ func TestResumeProbeEndedRecovery(t *testing.T) {
 		if got := resumeProbeEndedRecovery(tc.ctx, tc.err); got != tc.want {
 			t.Errorf("%s: resumeProbeEndedRecovery = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestRestartHandoffPreservesFeatureState(t *testing.T) {
+	tests := []struct {
+		name  string
+		tun   bool
+		proxy bool
+	}{
+		{name: "features the user turned off stay off"},
+		{name: "tun stays on", tun: true},
+		{name: "proxy stays on", proxy: true},
+		{name: "features the user turned on stay on", tun: true, proxy: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			writeReloadSource(t, path, reloadConfigJSON)
+
+			launched := ""
+			controller := &App{
+				source:        config.ConfigSource{FilePath: path},
+				configChecker: func(string) error { return nil },
+				selfLauncher: func(flags string, elevated bool) error {
+					launched = flags
+					return nil
+				},
+			}
+			controller.tunActive = test.tun
+			controller.proxyActive = test.proxy
+			controller.proxyOwned = test.proxy
+			if test.proxy {
+				controller.systemProxyRestorer = func(platform.ProxySession) (bool, error) {
+					return true, nil
+				}
+			}
+
+			if err := controller.Restart(); err != nil {
+				t.Fatalf("Restart() error = %v", err)
+			}
+			if launched == "" {
+				t.Fatal("Restart() did not launch a replacement controller")
+			}
+
+			// The replacement parses this command line and re-derives both
+			// features from it. The configuration asks for both, so only an
+			// explicit handoff choice can keep them as the user left them.
+			parsed := ParseFlags(strings.Fields(launched))
+			startupConfig := config.SingBoxConfig{HasTunInbound: true}
+			startupOptions := config.Options{TunStartMode: "on", SystemProxyAuto: true}
+			if got := startupTunRequested(startupConfig, startupOptions, parsed); got != test.tun {
+				t.Fatalf("replacement would start with tun=%v, want %v (flags %q)", got, test.tun, launched)
+			}
+			if got := startupProxyRequested(startupOptions, parsed); got != test.proxy {
+				t.Fatalf("replacement would start with proxy=%v, want %v (flags %q)", got, test.proxy, launched)
+			}
+		})
 	}
 }

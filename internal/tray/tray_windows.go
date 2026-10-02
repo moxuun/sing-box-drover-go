@@ -203,7 +203,7 @@ func run(controller *app.App) (runErr error) {
 		return err
 	}
 	defer func() { runErr = errors.Join(runErr, tray.close()) }()
-	if controller.Options().SystemProxyAuto || controller.Flags().Proxy {
+	if controller.StartupProxyRequested() {
 		if err := controller.EnableSystemProxy(); err != nil {
 			tray.setFault(true)
 			tray.balloon("System proxy could not be enabled: "+err.Error(), "Error", true)
