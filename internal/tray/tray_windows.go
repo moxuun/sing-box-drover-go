@@ -651,8 +651,9 @@ func (t *Tray) handleCommand(command uint32) {
 		if err := t.controller.SetAutostart(!t.autostartEnabled); err != nil {
 			if errors.Is(err, platform.ErrElevationRequired) {
 				if launchErr := t.controller.LaunchAutostartElevated(!t.autostartEnabled); launchErr == nil {
-					_ = t.controller.Close()
-					postQuitMessage.Call(0)
+					// The elevated helper only writes the scheduled task and stops,
+					// so this instance keeps the tray and its core. The checkmark
+					// is re-read the next time the menu is built.
 					return
 				} else {
 					t.setFault(true)

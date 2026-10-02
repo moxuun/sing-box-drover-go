@@ -20,6 +20,9 @@ import (
 var (
 	ErrAlreadyRunning   = errors.New("sing-box-drover is already running")
 	ErrElevationHandoff = errors.New("elevated sing-box-drover instance launched")
+	// ErrAutostartHandled reports that a one-shot autostart update finished. The
+	// process has nothing left to do and exits without opening a tray.
+	ErrAutostartHandled = errors.New("autostart update handled")
 	// ErrRestartHandoff is not a duplicate start. The running instance asked for
 	// a replacement and never released the single instance, so reporting it as a
 	// plain duplicate would exit silently and leave nothing running.
@@ -112,6 +115,29 @@ func handoffProxyFlags(active bool) string {
 		return " -proxy"
 	}
 	return " -no-proxy"
+}
+
+// runAutostartUpdate applies a one-shot "-autostart-enable" or
+// "-autostart-disable" request and stops. Success returns ErrAutostartHandled
+// so the process exits without a tray; a real failure is returned so main can
+// report it, which is how the elevated helper tells the user what went wrong.
+func runAutostartUpdate(logPath string, flags Flags) error {
+	if platform.AutostartRequiresElevation() && !platform.IsProcessElevated() {
+		return platform.ErrElevationRequired
+	}
+	enabled := flags.AutostartEnable
+	logger := logging.New(logPath)
+	defer logger.Close()
+	if err := platform.SetAutostart(enabled); err != nil {
+		logger.Log("Autostart", "autostart update failed: "+err.Error())
+		return fmt.Errorf("autostart update failed: %w", err)
+	}
+	status := "disabled"
+	if enabled {
+		status = "enabled"
+	}
+	logger.Log("Autostart", "autostart "+status)
+	return ErrAutostartHandled
 }
 
 // retryInstanceAcquisition keeps the restart handoff bounded while allowing
@@ -221,6 +247,15 @@ func NewAt(executable string, args []string) (*App, error) {
 		return nil, err
 	}
 	flags := ParseFlags(args)
+	// An autostart update is a one-shot command, handled before the single
+	// instance is acquired. The elevated helper exists to write the scheduled
+	// task and nothing else: if it took over the running controller instead,
+	// toggling autostart would leave a permanently elevated tray and core
+	// behind, because "/RL LIMITED" only constrains future logon starts and
+	// never demotes a session that is already running.
+	if flags.AutostartEnable || flags.AutostartDisable {
+		return nil, runAutostartUpdate(options.LogFile, flags)
+	}
 	acquire := func() (*platform.SingleInstance, bool, error) {
 		return platform.AcquireSingleInstance("Local\\sing-box-drover")
 	}
@@ -279,18 +314,6 @@ func NewAt(executable string, args []string) (*App, error) {
 	app.supervisor.SetHandler(func(event core.Event) {
 		app.handleCoreEvent(event)
 	})
-	if flags.AutostartEnable || flags.AutostartDisable {
-		enabled := flags.AutostartEnable
-		if err := app.SetAutostart(enabled); err != nil {
-			_ = app.Close()
-			return nil, fmt.Errorf("autostart update failed: %w", err)
-		}
-		status := "disabled"
-		if enabled {
-			status = "enabled"
-		}
-		logger.Log("Autostart", "autostart "+status)
-	}
 	wantTun := startupTunRequested(sbConfig, options, flags)
 	wantProxy := startupProxyRequested(options, flags)
 	if (wantTun || (wantProxy && platform.SystemProxyRequiresElevation())) && !platform.IsProcessElevated() {
@@ -806,17 +829,19 @@ func (a *App) LaunchAutostartElevated(enabled bool) error {
 	if err := a.ensureOpen(); err != nil {
 		return err
 	}
-	tun := a.TunActive()
-	if _, err := a.checkConfigCandidate(tun, false); err != nil {
-		return err
+	// The replacement only writes the scheduled task. It must not take over
+	// this controller, so it is launched without -restart and without carrying
+	// the TUN state; and it must not hand over the system proxy either, because
+	// a helper that never starts a core could not bring the proxy back up.
+	flags := "-autostart-enable"
+	if !enabled {
+		flags = "-autostart-disable"
 	}
-	flags := "-restart" + handoffTunFlags(tun)
-	if enabled {
-		flags += " -autostart-enable"
-	} else {
-		flags += " -autostart-disable"
+	launch := a.selfLauncher
+	if launch == nil {
+		launch = platform.LaunchSelf
 	}
-	return a.launchReplacement(flags, true, a.SystemProxyActive())
+	return launch(flags, true)
 }
 
 func (a *App) launchReplacement(flags string, elevated bool, wantProxy bool) error {

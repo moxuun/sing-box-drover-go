@@ -177,7 +177,6 @@ func TestReplacementActionsDoNotLaunchWhenSingBoxCheckFails(t *testing.T) {
 		{name: "restart", run: func(a *App) error { return a.Restart() }},
 		{name: "elevated TUN handoff", run: func(a *App) error { return a.LaunchElevated(true) }},
 		{name: "elevated proxy handoff", run: func(a *App) error { return a.LaunchSystemProxyElevated() }},
-		{name: "autostart handoff", run: func(a *App) error { return a.LaunchAutostartElevated(true) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			launched := false
@@ -229,32 +228,55 @@ func TestSystemProxyHandoffPreservesActiveTun(t *testing.T) {
 	}
 }
 
-func TestAutostartHandoffPreservesActiveTun(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.json")
-	writeReloadSource(t, path, reloadConfigJSON)
-	launchedFlags := ""
-	a := &App{
-		source:    config.ConfigSource{FilePath: path},
-		tunActive: true,
-		configChecker: func(string) error {
-			return nil
-		},
-		selfLauncher: func(flags string, elevated bool) error {
-			if !elevated {
-				t.Fatal("autostart replacement did not request elevation")
+func TestAutostartHandoffLaunchesOneShotHelper(t *testing.T) {
+	tests := []struct {
+		name     string
+		enabled  bool
+		wantFlag string
+	}{
+		{name: "enable", enabled: true, wantFlag: "-autostart-enable"},
+		{name: "disable", enabled: false, wantFlag: "-autostart-disable"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			launchedFlags := ""
+			restored := 0
+			// No configuration checker is configured: the helper only writes the
+			// scheduled task, so a broken configuration must not block the update.
+			a := &App{
+				tunActive:   true,
+				proxyActive: true,
+				proxyOwned:  true,
+				systemProxyRestorer: func(platform.ProxySession) (bool, error) {
+					restored++
+					return true, nil
+				},
+				selfLauncher: func(flags string, elevated bool) error {
+					if !elevated {
+						t.Fatal("autostart helper did not request elevation")
+					}
+					launchedFlags = flags
+					return nil
+				},
 			}
-			launchedFlags = flags
-			return nil
-		},
-	}
 
-	if err := a.LaunchAutostartElevated(true); err != nil {
-		t.Fatalf("LaunchAutostartElevated() error = %v", err)
-	}
-	// The proxy was never active, so the replacement is told to keep it off
-	// rather than left to fall back to the configured automatic proxy.
-	if launchedFlags != "-restart -tun -autostart-enable -no-proxy" {
-		t.Fatalf("autostart replacement flags = %q", launchedFlags)
+			if err := a.LaunchAutostartElevated(test.enabled); err != nil {
+				t.Fatalf("LaunchAutostartElevated() error = %v", err)
+			}
+			if launchedFlags != test.wantFlag {
+				t.Fatalf("autostart helper flags = %q, want %q", launchedFlags, test.wantFlag)
+			}
+			// The helper only writes the scheduled task, so it must neither take
+			// over this controller nor disturb the system proxy it still manages:
+			// a helper that never starts a core could not bring the proxy back.
+			parsed := ParseFlags(strings.Fields(launchedFlags))
+			if parsed.Restart || parsed.Tun || parsed.NoTun || parsed.Proxy || parsed.NoProxy {
+				t.Fatalf("autostart helper would take over the controller: %+v", parsed)
+			}
+			if restored != 0 || !a.SystemProxyActive() {
+				t.Fatalf("autostart helper disturbed the system proxy: restored=%d active=%v", restored, a.SystemProxyActive())
+			}
+		})
 	}
 }
 
