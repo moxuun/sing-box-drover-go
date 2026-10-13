@@ -1,5 +1,15 @@
 # 开发说明
 
+## 当前 mygo 三端迁移
+
+- `已完成` 使用 mygo v0.4.8 共享 Windows、macOS 和 Linux 托盘、菜单、通知、Shell 与休眠恢复，删除旧 Win32 托盘、systray 和 Objective-C 唤醒桥接。
+- `已完成` 工具链固定 Go 1.27.1，Windows 使用带版本及源码哈希校验的 overlay 规避 [golang/go#81956](https://github.com/golang/go/issues/81956)，自动下载的工具链会先复制到模块缓存外。
+- `已完成` Linux 增加单实例、重启交接、XDG 自启动、GNOME 代理与 sing-box 的 TUN 权限检查；平台适配仍放在 `internal/windows`，保留现有导入。
+- `已完成` 本地 Linux 全量测试、vet、五种目标编译通过；Windows PE `.data` VirtualSize 减少约 32 MiB。构建、限制及完整验证记录见 [mygo 迁移记录](mygo-migration.md)。
+- `待实机验证` Windows 私有提交内存、三端托盘交互、自启动、提权、GNOME 代理、TUN 和休眠恢复；macOS Universal 打包与签名仍需在 macOS 上运行，远端 CI 尚未执行。
+
+以下有日期的实测属于历史记录；原 Win32/GDI 和 Go 1.25 的结论不作为当前 mygo 版本的验证结果。
+
 ## 功能点与改进记录
 
 状态说明：`已完成` 表示代码和自动检查已具备；`待实机验证` 表示还需要在真实 Windows/macOS 托盘、提权、睡眠唤醒或网络环境中确认；`设计待决定` 表示已经审查出问题，但不代表已经修改。
@@ -12,12 +22,12 @@
 ### 核心功能
 
 - `已完成` 轻量跨平台托盘控制器，使用用户自带的外置 `sing-box`/`sing-box.exe` 和原生配置；不内置内核，不做订阅管理、配置编辑和流量统计。
-- `已完成` 托盘负责单实例、内核启停重启、状态显示、Homepage 和系统集成。Windows 用原生 Win32 消息循环和通知区域图标；macOS 用 `fyne.io/systray` 的原生 Objective-C/AppKit 状态栏，不引入 Electron、WebView 或大型 UI 框架。
+- `已完成` 托盘使用 mygo 的原生 Windows、macOS、Linux 后端共享实现，不引入 Electron 或 WebView。
 - `已完成` 通过运行中内核的 Clash API 读取 Selector，用 `PUT /proxies/<selector>` 切换节点；provider 展开的节点、国旗和当前选择显示在托盘菜单。
 - `已完成` 静态 Selector 缓存遵循 sing-box 的默认值：配置省略 `default` 时勾选 `outbounds` 第一项，显式默认值原样保留。
 - `已完成` Selector 刷新和切换尊重调用方上下文取消；取消后返回的过期响应不写入缓存，nil context 归一化为后台上下文。
 - `待实机验证` 读取运行中 `URLTest.now`，在自动选择组的当前选项后显示实际落点；落点只用于显示，不新增手动切换入口。
-- `已完成` Selector 菜单保留 Windows 原生勾选样式，并处理勾选标记与节点旗帜重叠；菜单布局不再扩展。
+- `已完成` Selector 使用共享 checkbox 菜单模型；Windows 用小型原生弹出菜单适配层恢复内置国旗和勾选位图，保留共享菜单回调，并在关闭及构建失败时释放原生资源；macOS/Linux 使用 mygo 原生菜单与 Unicode 国旗。Windows 虚拟机中的显示效果仍待实机确认。
 - `已完成` Homepage 支持配置 `http://` 或 `https://` 地址，未配置时指向本项目仓库。
 - `已完成` 单击托盘切换 Windows 系统代理，Shift 单击切换 TUN。
 - `已完成` TUN 支持按配置启动；普通权限进程需要 TUN 时经 UAC 提权并交接给新的托盘实例。
@@ -37,8 +47,8 @@
 - `已完成` macOS 单实例使用 `flock`，提权交接把原用户锁文件路径传给 root 实例。
 - `已完成` macOS 代理和 TUN 交接共用 `osascript ... with administrator privileges`；普通启动使用独立 session，避免终端退出中断控制器。
 - `已完成` macOS 登录启动写 `~/Library/LaunchAgents/com.moxuun.sing-box-drover.plist`；管理员实例拒绝写 root 的 LaunchAgent。
-- `已完成` macOS 监听 `NSWorkspaceDidWakeNotification`，唤醒后复用 `RecoverAfterResume` 检查内核与 Clash API。
-- `已完成` macOS `.app` 用 `LSUIElement` 隐藏 Dock 图标；默认构建 arm64 + x86_64 Universal，最低系统版本固定 macOS 12.0，删中间文件后执行 ad-hoc 签名。
+- `已完成` mygo Power 的唤醒回调复用 `RecoverAfterResume` 检查内核与 Clash API，三个系统共用恢复流程。
+- `已完成` macOS `.app` 用 `LSUIElement` 隐藏 Dock 图标；默认构建 arm64 + x86_64 Universal，最低系统版本固定 macOS 13.0，关闭 CGO，删中间文件后执行 ad-hoc 签名。
 - `已完成` 2026-09-30 在 macOS 27.0.1 arm64 上用 sing-box 1.13.4 完成普通权限启动验证（验证时关闭系统代理和 TUN）。
 - `待实机验证` 真实 macOS 用户会话中确认系统代理授权、LaunchAgent 登录启动、管理员 TUN 托盘、睡眠唤醒和真实配置的完整生命周期。
 
@@ -107,13 +117,13 @@
 - `已完成` 托盘菜单遇到无法编码的节点名、分组标题、分隔线或底部操作项时报错并销毁不完整菜单，不再留下失配的命令映射或 GDI 资源。
 - `待实机验证` 2026-09-16 观察到跨 S0 Modern Standby 运行时首次打开菜单偶发缺少 Selector 的复合勾选/国旗位图（再次打开自行恢复）；现已改为直接写入 DIB 像素、GDI 勾选绘制后执行 `GdiFlush` 并规范化 alpha，自动测试通过，真实睡眠唤醒循环和 Start11 启用/停用仍待确认。
 - `待实机验证` 图标颜色、tooltip 和取消系统代理/TUN 后的状态需要在真实托盘中确认，自动化测试不能替代视觉检查。
-- `已完成` 正式构建统一使用 `scripts/build.ps1`（Go 1.25.14、应用图标和 manifest）和 `scripts/build-macos.sh`（CGO、`Info.plist`，默认输出 Universal `.app`）。
+- `已完成` 正式构建使用 `scripts/build.ps1`（Go 1.27.1、内存 overlay、应用图标和 manifest）、`scripts/build-macos.sh`（纯 Go Universal `.app`）和 `scripts/build-linux.sh`（amd64/arm64）。
 - `已完成` GitHub Actions 在推送 `v*` 标签时跑格式检查、测试、`go vet` 并打包产物，由独立任务创建 GitHub Release；该任务不再检出仓库后曾报 `failed to run git: fatal: not a git repository`，现已显式设置 `GH_REPO: ${{ github.repository }}`。
 - `已完成` `v0.1.1` 至 `v0.1.5` 的远程发布工作流均已成功，标签构建与 GitHub Release 链路已实际验证。
-- `已完成` 持续集成工作流在 Windows 和 macOS runner 上执行格式检查、全量测试和 `go vet`；发布工作流只负责版本标签产物。
-- `已完成` `scripts/build.ps1` 会保存并恢复调用者原有的 `GOTOOLCHAIN`、`GOOS`、`GOARCH` 和 `CGO_ENABLED`，并清理临时资源文件。
+- `已完成` 持续集成在 Windows、macOS 和 Linux runner 上执行格式检查、全量测试、`go vet` 和构建；发布工作流生成三端产物。
+- `已完成` `scripts/build.ps1` 保存并恢复 `GOTOOLCHAIN`、`GOROOT`、`GOOS`、`GOARCH`、`CGO_ENABLED` 和 `GOFIPS140`，并清理临时资源文件。
 - `待实机验证` 正式构建仍需在运行中的旧 EXE 场景核对目标替换结果、构建信息和是否遗留 `.exe~`；脚本不会强制结束用户正在运行的程序。
-- `已完成` 工具链从 Go 1.25.6 更新到 Go 1.25.14，仍以 Go 1.25 为主版本构建基线；Go 1.26/1.27 不直接升级。
+- `已完成` mygo 迁移将 Go 基线更新为 1.27.1；Windows 的 32 MiB 静态缓冲区使用受源码哈希约束的 overlay 按需分配。
 - `已完成` README 的 4–8 MiB 说明已标注为 Go 1.25.6 的历史样本，不再作为当前版本的性能承诺。
 - `待实机验证` Go 1.25.14 与旧 1.25.6 的内存和完整托盘生命周期尚未做同一条件对比，结论仍需真实 Windows 复测。
 - `待实机验证` 2026-09-12 对当时运行的 Go 1.25.6 产物连续采样约为 30.2 MiB Working Set、19.3 MiB Private Memory、406 handles，与 README 的 4–8 MiB 截图不一致；该产物构建信息指向 `v0.1.5+dirty`，需要用当前提交的正式构建冷启动后按相同口径复测，不能据此认定代码回归或继续沿用旧宣传值。
@@ -140,8 +150,8 @@
 - `internal/config`：INI、JSON 读取和 TUN 过滤；
 - `internal/clash`：Clash API 访问、选择器读取和切换；
 - `internal/core`：所管理的 `sing-box`/`sing-box.exe` 生命周期；
-- `internal/tray`：Win32/AppKit 托盘、状态图标和选择器菜单渲染；
-- `internal/windows`：跨平台系统集成层（Windows Win32、macOS networksetup/LaunchAgent/AppKit 通知），目录名保留以兼容现有导入；
+- `internal/tray`：共享 mygo 托盘、状态图标和选择器菜单；
+- `internal/windows`：三端系统集成层（Windows Win32、macOS networksetup/LaunchAgent、Linux GSettings/XDG/capabilities），目录名保留以兼容现有导入；
 - `resources`：Windows 应用图标/权限清单和 macOS `Info.plist`；
 - `scripts`：可复现的本地构建脚本；
 - `docs`：用户说明和开发资料；
@@ -154,7 +164,7 @@
 托盘控制器不内置 sing-box 内核。Windows 构建：
 
 ```powershell
-$env:GOTOOLCHAIN = "go1.25.14"
+$env:GOTOOLCHAIN = "go1.27.1"
 go test ./...
 go vet ./...
 .\scripts\build.ps1
@@ -165,18 +175,28 @@ Windows 构建脚本使用固定版本的 Go 资源生成器，把 `resources/ap
 再链接进 Windows GUI 程序；构建结束后会删除这个中间文件。GitHub Actions
 调用同一脚本，因此发布产物也会带有应用图标和 `asInvoker` 清单。
 
-macOS 构建需要安装 Xcode Command Line Tools，并启用 CGO：
+macOS 构建需要 `lipo` 和 `codesign`，不再需要 CGO：
 
 ```bash
-GOTOOLCHAIN=go1.25.14 go test ./...
-GOTOOLCHAIN=go1.25.14 go vet ./...
+GOTOOLCHAIN=go1.27.1 go test ./...
+GOTOOLCHAIN=go1.27.1 go vet ./...
 VERSION=dev ./scripts/build-macos.sh
 ```
 
 脚本默认构建 arm64 + x86_64 Universal `.app`，保留包旁边的
 `sing-box-drover.ini`，并执行 ad-hoc 签名。只构建当前架构时可设置
 `GOARCH=arm64` 或 `GOARCH=amd64`；需要使用其他最低系统版本时可设置
-`MACOS_MIN_VERSION`，同时保持 `Info.plist` 与 Mach-O 部署目标一致。
+`MACOS_MIN_VERSION`（不低于 13.0），同时保持 `Info.plist` 与 Mach-O 部署目标一致。
+
+Linux 构建同样使用纯 Go，可显式指定架构：
+
+```bash
+GOARCH=amd64 ./scripts/build-linux.sh output/linux-amd64/sing-box-drover
+GOARCH=arm64 ./scripts/build-linux.sh output/linux-arm64/sing-box-drover
+```
+
+运行时安装 GTK 3 和 AppIndicator 库，并在支持托盘的用户桌面会话中启动。
+系统代理只接入 GNOME；TUN 使用 sing-box 自身的网络 capability，细节见用户说明。
 
 ### macOS 本地运行
 
@@ -220,23 +240,22 @@ lsof -nP -iTCP -sTCP:LISTEN | grep sing-box
 内核文件。普通权限验证通过后，再单独测试管理员提权、系统代理、TUN、
 LaunchAgent 和睡眠唤醒。
 
-`go.mod` 暂时将 Go 1.25.14 固定为低内存构建基线。`toolchain` 指令不会让
-已经运行的 Go 1.27 自动降级，因此需要在 PowerShell 中设置
-`$env:GOTOOLCHAIN = "go1.25.14"`。
+`go.mod` 固定 Go 1.27.1，构建脚本也显式选择该工具链。Windows 构建不要绕过
+`build.ps1` 的 overlay；自动下载工具链位于模块缓存时，脚本会复制一份到
+`output/.toolchains/go1.27.1` 后编译。
 
 ## Go 版本和内存
 
-本地复现表明，Go 1.26 和 Go 1.27 在 `net/http` 等 TLS 路径中会引入
-32 MiB 的 FIPS 140 熵源缓冲区（`crypto/internal/fips140/drbg.memory`）。
-即使未启用 FIPS，该缓冲区在 Windows 上也会成为驻留私有内存，使托盘进程
-额外占用约 34 MB。上游问题 [`golang/go#78321`](https://github.com/golang/go/issues/78321)
-记录了 Wasm 场景；Windows 工作集结论来自本地复现。在确认新版工具链修复前，
-不要把 Go 1.27 当成解决方案。
+Go 1.27.1 的 FIPS 熵源仍含 32 MiB 静态缓冲区。Windows overlay 改为按需分配；
+本次同条件 PE 比较显示 `.data` VirtualSize 从 `0x20B6320` 降为 `0xB6310`。
+这证明静态占用被移除，真实私有提交内存和工作集仍需 Windows 实测。
+
+补丁实现、非 FIPS 使用范围和升级规则见 [mygo 迁移记录](mygo-migration.md)。
 
 ## 自动发布
 
 推送以 `v` 开头的版本标签（例如 `v0.1.0`）后，`.github/workflows/release.yml`
-会在 Windows 和 macOS runner 上分别运行格式检查、测试、静态检查和构建，再由
+会在 Windows、macOS 和 Linux runner 上分别运行格式检查、测试、静态检查和构建，再由
 单独的发布任务统一创建 GitHub Release。
 
 Windows 发布包为 `sing-box-dover-go-v版本-windows-amd64.zip`，包含
@@ -244,8 +263,9 @@ Windows 发布包为 `sing-box-dover-go-v版本-windows-amd64.zip`，包含
 
 macOS 发布包为 `sing-box-drover-v版本-macos-universal.zip`，包含
 `sing-box-drover.app` 和旁边的 `sing-box-drover.ini`，其中的 Universal
-二进制同时支持 arm64 与 x86_64。两个平台都不包含 sing-box 内核；Release
-同时提供 ZIP 的 SHA256 校验文件。
+二进制同时支持 arm64 与 x86_64。Linux 发布包分别为
+`sing-box-drover-v版本-linux-amd64.tar.gz` 和 `sing-box-drover-v版本-linux-arm64.tar.gz`。
+三个平台都不包含 sing-box 内核；Release 同时提供各压缩包的 SHA256 校验文件。
 
 发布示例：
 

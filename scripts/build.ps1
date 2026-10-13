@@ -4,10 +4,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
-$OutputFile = [System.IO.Path]::GetFullPath($OutputPath, $Root)
+# The two-argument overload is unavailable in Windows PowerShell 5.1.
+if ([System.IO.Path]::IsPathRooted($OutputPath)) {
+    $OutputFile = [System.IO.Path]::GetFullPath($OutputPath)
+} else {
+    $OutputFile = [System.IO.Path]::GetFullPath((Join-Path $Root $OutputPath))
+}
 $ResourceFile = Join-Path $Root "cmd\sing-box-drover\resource_windows_amd64.syso"
 $OutputDirectory = Split-Path -Parent $OutputFile
-$BuildEnvironmentNames = @("GOTOOLCHAIN", "GOOS", "GOARCH", "CGO_ENABLED")
+$OverlayFile = Join-Path $Root "output\.go-overlay\overlay.json"
+$BuildEnvironmentNames = @("GOTOOLCHAIN", "GOROOT", "GOOS", "GOARCH", "CGO_ENABLED", "GOFIPS140")
 $PreviousBuildEnvironment = @{}
 foreach ($name in $BuildEnvironmentNames) {
     $existing = Get-Item -Path ("Env:{0}" -f $name) -ErrorAction SilentlyContinue
@@ -23,12 +29,37 @@ try {
     Push-Location -LiteralPath $Root
     $LocationPushed = $true
     New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
-    $env:GOTOOLCHAIN = "go1.25.14"
+    $env:GOTOOLCHAIN = "go1.27.1"
     $env:GOOS = "windows"
     $env:GOARCH = "amd64"
     $env:CGO_ENABLED = "0"
 
-    & go run github.com/akavel/rsrc@v0.10.2 `
+    $GoEnvironment = @(& go env GOROOT GOMODCACHE)
+    if ($LASTEXITCODE -ne 0 -or $GoEnvironment.Count -ne 2) {
+        throw "Failed to locate the Go 1.27.1 toolchain"
+    }
+    $GoRoot = [System.IO.Path]::GetFullPath($GoEnvironment[0])
+    $ModuleCache = [System.IO.Path]::GetFullPath($GoEnvironment[1]).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+    if ($GoRoot.StartsWith($ModuleCache + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+        # Go rejects overlays beneath GOMODCACHE, including downloaded toolchains.
+        $StandaloneRoot = Join-Path $Root "output\.toolchains\go1.27.1"
+        if (-not (Test-Path -LiteralPath $StandaloneRoot)) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $StandaloneRoot) | Out-Null
+            Copy-Item -LiteralPath $GoRoot -Destination $StandaloneRoot -Recurse
+        }
+        $GoRoot = $StandaloneRoot
+    }
+    $env:GOROOT = $GoRoot
+    $env:GOTOOLCHAIN = "local"
+    $GoBinary = Join-Path $GoRoot "bin\go.exe"
+
+    & $GoBinary run .\tools\go-overlay -goroot $GoRoot -output $OverlayFile
+    if ($LASTEXITCODE -ne 0) {
+        throw "Go memory workaround preparation failed"
+    }
+    $env:GOFIPS140 = "off"
+
+    & $GoBinary run github.com/akavel/rsrc@v0.10.2 `
         -arch amd64 `
         -ico resources\app.ico `
         -manifest resources\app.manifest `
@@ -37,7 +68,8 @@ try {
         throw "Windows resource generation failed"
     }
 
-    & go build `
+    & $GoBinary build `
+        -overlay $OverlayFile `
         -trimpath `
         -ldflags="-s -w -H=windowsgui" `
         -o $OutputFile `

@@ -21,9 +21,12 @@ func TestSupervisorStopsWithoutUnexpectedFailure(t *testing.T) {
 	}
 	supervisor := NewSupervisor(script, nil)
 	defer supervisor.Close()
-	if err := supervisor.Start(`{"inbounds":[]}`); err != nil {
+	startupCtx, cancelStartup := context.WithCancel(context.Background())
+	defer cancelStartup()
+	if err := supervisor.StartContext(startupCtx, `{"inbounds":[]}`); err != nil {
 		t.Fatal(err)
 	}
+	cancelStartup()
 	if supervisor.State() != StateRunning {
 		t.Fatalf("state = %v, want running", supervisor.State())
 	}
@@ -34,6 +37,47 @@ func TestSupervisorStopsWithoutUnexpectedFailure(t *testing.T) {
 	}
 	if state := supervisor.State(); state != StateStopped {
 		t.Fatalf("state = %v, want stopped", state)
+	}
+}
+
+func TestSupervisorStartContextCancelsSpawnedCore(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("requires a POSIX shell for the portable lifecycle fixture")
+	}
+	script := filepath.Join(t.TempDir(), "starting-core.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\nexec sleep 30\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	supervisor := NewSupervisor(script, nil)
+	defer supervisor.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- supervisor.StartContext(ctx, `{}`) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		supervisor.mu.Lock()
+		process := supervisor.process
+		supervisor.mu.Unlock()
+		if process != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("core was not spawned")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled startup = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled startup did not stop its core")
+	}
+	if state := supervisor.State(); state != StateStopped {
+		t.Fatalf("cancelled startup state = %v, want stopped", state)
 	}
 }
 

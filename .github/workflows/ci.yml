@@ -18,17 +18,29 @@ jobs:
             os: windows-latest
           - name: macOS
             os: macos-latest
+          - name: Linux
+            os: ubuntu-latest
     runs-on: ${{ matrix.os }}
+    env:
+      GOTOOLCHAIN: go1.27.1
+      CGO_ENABLED: "0"
 
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 安装 Go 1.25.14
+      - name: 安装 Go 1.27.1
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25.14"
+          go-version: "1.27.1"
           cache: true
+
+      - name: 准备 Windows Go 内存补丁
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          overlay=$(go run ./tools/go-overlay -output "$RUNNER_TEMP/go-overlay/overlay.json")
+          echo "GOFLAGS=-overlay=$overlay" >> "$GITHUB_ENV"
 
       - name: 检查格式
         shell: bash
@@ -47,3 +59,18 @@ jobs:
       - name: 运行静态检查
         shell: bash
         run: go vet ./...
+
+      - name: 验证 Windows 构建
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\scripts\build.ps1 -OutputPath output\ci\sing-box-dover-go.exe
+
+      - name: 验证 macOS 构建
+        if: runner.os == 'macOS'
+        shell: bash
+        run: ./scripts/build-macos.sh output/ci/sing-box-drover.app
+
+      - name: 验证 Linux 构建
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ./scripts/build-linux.sh output/ci/sing-box-drover

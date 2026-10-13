@@ -462,7 +462,8 @@ func macProxySettingEqual(left, right macProxySetting) bool {
 		// an inactive server/port has no effect on proxy behavior.
 		return true
 	}
-	return left.Server == right.Server && left.Port == right.Port
+	// Authentication changes mean these settings no longer belong to us.
+	return left.Server == right.Server && left.Port == right.Port && left.Authenticated == right.Authenticated
 }
 
 func validateMacProxyAddress(host string, port int) error {

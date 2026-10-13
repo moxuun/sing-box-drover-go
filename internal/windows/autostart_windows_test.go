@@ -4,6 +4,8 @@ package windows
 
 import (
 	"encoding/binary"
+	"os/exec"
+	"slices"
 	"testing"
 	"time"
 	"unicode/utf16"
@@ -89,14 +91,23 @@ func TestTaskEnabledFromUTF8BytesWithUTF16Declaration(t *testing.T) {
 }
 
 func TestSetAutostartDisableIsIdempotentWhenTaskIsMissing(t *testing.T) {
-	state, err := QueryAutostart()
-	if err != nil {
-		t.Skipf("cannot inspect task scheduler: %v", err)
+	// The scheduler call is replaced: QueryAutostart reports an existing but
+	// disabled task as AutostartDisabled as well, so driving the real command
+	// with the fixed task name would delete a definition the user really has.
+	var calls [][]string
+	original := runTaskScheduler
+	runTaskScheduler = func(args ...string) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		return []byte("ERROR: The system cannot find the file specified."), &exec.ExitError{}
 	}
-	if state != AutostartDisabled {
-		t.Skip("the fixed task exists; leave it unchanged in this read-only test")
-	}
+	t.Cleanup(func() { runTaskScheduler = original })
 	if err := SetAutostart(false, ""); err != nil {
 		t.Fatalf("SetAutostart(false) with no task: %v", err)
+	}
+	// A no-op implementation must not pass this test: the delete has to reach the
+	// scheduler for the task the rest of the package manages.
+	want := []string{"/Delete", "/TN", taskName, "/F"}
+	if len(calls) != 1 || !slices.Equal(calls[0], want) {
+		t.Fatalf("scheduler calls = %v, want one %v", calls, want)
 	}
 }

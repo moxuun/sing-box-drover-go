@@ -139,6 +139,36 @@ func TestRestartWithConfigKeepsRunningStateWhenSingBoxCheckFails(t *testing.T) {
 	}
 }
 
+func TestTunPrivilegeFailureKeepsRunningCoreAndProxy(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.json")
+	writeReloadSource(t, path, reloadConfigJSON)
+	privilegeErr := errors.New("missing core network capability")
+	a := &App{
+		options:       config.Options{SBDir: directory},
+		source:        config.ConfigSource{FilePath: path, JSONText: `{"old":true}`},
+		configChecker: func(string) error { return nil },
+		tunPrivilegeChecker: func(corePath string) error {
+			if corePath != filepath.Join(directory, platform.CoreExecutableName()) {
+				t.Fatalf("checked the wrong core: %q", corePath)
+			}
+			return privilegeErr
+		},
+		proxyActive: true,
+		proxyOwned:  true,
+		systemProxyRestorer: func(platform.ProxySession) (bool, error) {
+			t.Fatal("proxy was changed before TUN privilege validation")
+			return false, nil
+		},
+	}
+	if err := a.ToggleTun(true); !errors.Is(err, privilegeErr) {
+		t.Fatalf("ToggleTun() = %v, want %v", err, privilegeErr)
+	}
+	if a.tunActive || !a.proxyActive || a.source.JSONText != `{"old":true}` {
+		t.Fatal("privilege failure changed the running configuration")
+	}
+}
+
 func TestRealConfigCandidatesPassSingBoxCheck(t *testing.T) {
 	configPath := os.Getenv("SING_BOX_DROVER_TEST_CONFIG")
 	corePath := os.Getenv("SING_BOX_DROVER_TEST_CORE")

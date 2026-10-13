@@ -6,17 +6,144 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
 	"sing-box-drover/internal/clash"
 	"sing-box-drover/internal/config"
 	"sing-box-drover/internal/core"
+	"sing-box-drover/internal/logging"
 	platform "sing-box-drover/internal/windows"
 )
+
+func TestHandoffAcquisitionHonorsStartupContext(t *testing.T) {
+	controller := &App{instanceAcquirer: func() (*platform.SingleInstance, bool, error) {
+		return nil, false, nil
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if err := controller.acquireHandoffInstance(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("acquireHandoffInstance = %v, want startup deadline", err)
+	}
+	if time.Since(started) > time.Second {
+		t.Fatal("handoff acquisition ignored its startup deadline")
+	}
+	if controller.instance != nil {
+		t.Fatal("cancelled handoff retained instance ownership")
+	}
+}
+
+func TestHandoffStartCoreHonorsCancelledContext(t *testing.T) {
+	controller := &App{coreStarter: func(string) error {
+		t.Error("cancelled production handoff entered core startup")
+		return nil
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := controller.startCoreContext(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("startCoreContext = %v, want context cancellation", err)
+	}
+}
+
+func TestInitializedControllerCancelsCoreAfterItSpawns(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("requires a POSIX shell for the process lifecycle fixture")
+	}
+	if _, err := os.Stat("/bin/sleep"); err != nil {
+		t.Skip("requires /bin/sleep for the process lifecycle fixture")
+	}
+	dir := t.TempDir()
+	corePath := filepath.Join(dir, platform.CoreExecutableName())
+	if err := os.WriteFile(corePath, []byte("#!/bin/sh\nprintf '%s' \"$$\" > \"$0.pid\"\nexec /bin/sleep 60\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":18794}],"outbounds":[{"type":"direct","tag":"direct"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	options := config.DefaultOptions()
+	options.SBDir = dir
+	options.SBConfigFile = configPath
+	logger := logging.New("")
+	defer logger.Close()
+	controller, err := newController(filepath.Join(dir, "drover"), dir, options, Flags{NoTun: true, NoProxy: true}, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := controller.Close(); err != nil {
+			t.Errorf("close initialized controller: %v", err)
+		}
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- controller.startCoreContext(ctx) }()
+	var pid int
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if content, err := os.ReadFile(corePath + ".pid"); err == nil {
+			pid, _ = strconv.Atoi(string(content))
+			if pid > 0 {
+				break
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if pid <= 0 {
+		t.Fatal("initialized controller did not spawn the core")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("startup cancelled after spawn = %v, want context cancellation", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("initialized controller ignored startup cancellation")
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer process.Release()
+	if err := process.Signal(syscall.Signal(0)); err == nil {
+		t.Fatalf("cancelled startup left core %d running", pid)
+	}
+	if state := controller.supervisor.State(); state == core.StateStarting || state == core.StateRunning {
+		t.Fatalf("cancelled startup kept live core state %v", state)
+	}
+}
+
+func TestStartupCleanupFailuresSurviveHandledOutcomes(t *testing.T) {
+	for _, cause := range []error{ErrHandoffReported, ErrHandoffAborted, ErrElevationHandoff} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			cleanupErr := errors.New("settings restore failed")
+			controller := &App{
+				proxyActive: true,
+				proxyOwned:  true,
+				systemProxyRestorer: func(platform.ProxySession) (bool, error) {
+					return false, cleanupErr
+				},
+			}
+			err := controller.closeStartup(cause)
+			if !errors.Is(err, ErrCleanupFailed) || !errors.Is(err, cleanupErr) || !errors.Is(err, cause) {
+				t.Fatalf("startup cleanup error lost its outcome or failure: %v", err)
+			}
+			controller.systemProxyRestorer = func(platform.ProxySession) (bool, error) { return true, nil }
+			if err := controller.closeStartup(cause); err != cause {
+				t.Fatalf("successful cleanup changed startup outcome: %v", err)
+			}
+		})
+	}
+}
 
 func TestParseFlagsIncludesProxyHandoff(t *testing.T) {
 	flags := ParseFlags([]string{"-restart", "-tun", "-proxy"})
@@ -697,9 +824,14 @@ func TestRestartHandoffPreservesFeatureState(t *testing.T) {
 			writeReloadSource(t, path, reloadConfigJSON)
 
 			launched := ""
+			privilegesChecked := false
 			controller := &App{
 				source:        config.ConfigSource{FilePath: path},
 				configChecker: func(string) error { return nil },
+				tunPrivilegeChecker: func(string) error {
+					privilegesChecked = true
+					return nil
+				},
 				selfLauncher: func(flags string, elevated bool) error {
 					launched = flags
 					return nil
@@ -719,6 +851,9 @@ func TestRestartHandoffPreservesFeatureState(t *testing.T) {
 			}
 			if launched == "" {
 				t.Fatal("Restart() did not launch a replacement controller")
+			}
+			if privilegesChecked != test.tun {
+				t.Fatalf("TUN privileges checked = %v, want %v", privilegesChecked, test.tun)
 			}
 
 			// The replacement parses this command line and re-derives both

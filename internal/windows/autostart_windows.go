@@ -40,7 +40,8 @@ func taskMissing(output []byte) bool {
 	return false
 }
 
-func runTaskScheduler(args ...string) ([]byte, error) {
+// Tests replace the scheduler call to avoid changing the user's task.
+var runTaskScheduler = func(args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), taskSchedulerTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "schtasks.exe", args...)

@@ -9,7 +9,12 @@ case "$OUTPUT" in
 esac
 
 VERSION="${VERSION:-dev}"
-MACOS_MIN_VERSION="${MACOS_MIN_VERSION:-12.0}"
+MACOS_MIN_VERSION="${MACOS_MIN_VERSION:-13.0}"
+if [[ ! "$MACOS_MIN_VERSION" =~ ^([0-9]+)\.([0-9]+)(\.[0-9]+)?$ ]] || [[ "${BASH_REMATCH[1]:-0}" -lt 13 ]]; then
+	echo "Go 1.27 requires macOS 13.0 or newer" >&2
+	exit 1
+fi
+export GOTOOLCHAIN=go1.27.1
 APP_CONTENTS="$APP/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"
@@ -22,13 +27,6 @@ else
 	ARCHS=(arm64 amd64)
 fi
 BUILD_FILES=()
-
-# cgo otherwise adopts the SDK's host deployment target, which can make an
-# "LSMinimumSystemVersion=12.0" bundle unlaunchable on older supported systems.
-export MACOSX_DEPLOYMENT_TARGET="$MACOS_MIN_VERSION"
-version_flag="-mmacosx-version-min=$MACOS_MIN_VERSION"
-export CGO_CFLAGS="$version_flag${CGO_CFLAGS:+ $CGO_CFLAGS}"
-export CGO_LDFLAGS="$version_flag${CGO_LDFLAGS:+ $CGO_LDFLAGS}"
 
 cleanup() {
 	if ((${#BUILD_FILES[@]})); then
@@ -49,8 +47,8 @@ for arch in "${ARCHS[@]}"; do
 	BUILD_FILES+=("$output")
 	(
 		cd "$ROOT"
-		GOOS=darwin GOARCH="$arch" CGO_ENABLED=1 \
-			go build -trimpath -ldflags="-s -w" -o "$output" ./cmd/sing-box-drover
+		GOOS=darwin GOARCH="$arch" CGO_ENABLED=0 \
+			go build -trimpath -ldflags="-s -w -macos=$MACOS_MIN_VERSION" -o "$output" ./cmd/sing-box-drover
 	)
 done
 

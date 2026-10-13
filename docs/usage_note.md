@@ -1,6 +1,6 @@
 # 使用说明
 
-本程序是一个轻量级的系统托盘控制器，用于在 Windows 任务栏或 macOS 菜单栏中便捷管理 sing-box（开关系统代理、开启 TUN 虚拟网卡、切换节点等）。
+本程序通过 mygo 在 Windows、macOS 和 Linux 托盘中管理 sing-box，包括系统代理、TUN、节点选择和内核重启。
 
 ## 准备文件
 
@@ -8,8 +8,8 @@
 
 | 文件                    | 说明                                                           |
 | ----------------------- | -------------------------------------------------------------- |
-| `sing-box-dover-go.exe` | 控制器本体（macOS 为 `sing-box-drover.app`）                   |
-| `sing-box.exe`          | sing-box 内核（macOS 为 `sing-box`，需自行下载官方或兼容版本） |
+| `sing-box-dover-go.exe` | 控制器本体；macOS 为 `sing-box-drover.app`，Linux 为 `sing-box-drover` |
+| `sing-box.exe`          | sing-box 内核；macOS/Linux 为 `sing-box`，需自行准备 |
 | `config.json`           | 你的 sing-box 配置文件（必须是已能正常工作的配置）             |
 | `sing-box-drover.ini`   | 控制器设置文件（压缩包内已自带默认配置）                       |
 
@@ -19,14 +19,13 @@
 
 ## 使用方法
 
-双击运行控制器后**不会弹出常规窗口**，程序会常驻在任务栏右下角托盘区（macOS 在顶部状态栏）。
-
-![托盘菜单](./menu.png)
+运行控制器后不会弹出常规窗口，程序常驻托盘。Windows 位于任务栏通知区，macOS 位于顶部菜单栏，Linux 由桌面的 StatusNotifier/AppIndicator 宿主显示。
 
 ### 快捷操作
 
-- **单击托盘图标**：快速开启或关闭系统代理。
-- **Shift + 单击托盘图标**：快速开关 TUN 模式（需要管理员提权确认；macOS 可直接通过右键菜单操作）。
+- **Windows 单击托盘图标**：快速开启或关闭系统代理。
+- **Windows Shift + 单击**：快速开关 TUN；需要权限时显示 UAC。
+- **macOS / Linux**：展开托盘菜单，点击 `System Proxy` 或 `TUN`。
 
 ### 图标状态
 
@@ -41,10 +40,27 @@
 | **节点列表**                   | 直接点击即可切换出站节点。若指向自动选择组（URLTest），会标出当前实际落点的节点。 |
 | **System Proxy**               | 勾选表示已开启系统代理。                                                          |
 | **TUN**                        | 开关虚拟网卡模式（仅在配置中有 `tun` 入站时显示）。                               |
-| **Start with Windows / macOS** | 勾选即可开启开机自启。                                                            |
+| **Start with Windows / macOS / Linux** | 随当前用户登录启动；Linux 写入 XDG 自启动项。 |
 | **Restart core**               | 重启内核进程。修改了 `config.json` 后点此生效。                                   |
 | **Homepage**                   | 在浏览器中打开指定页面（可在 ini 中设为 Web 控制台网址）。                        |
 | **Quit**                       | 退出控制器并同步停止内核。                                                        |
+
+## Linux
+
+运行需要 GTK 3 和 `libayatana-appindicator3` 或 `libappindicator3`。桌面还要提供 StatusNotifier/AppIndicator 托盘宿主；GNOME 通常需要安装并启用 AppIndicator 扩展。
+
+系统代理目前支持 GNOME 的 GSettings，设置 HTTP、HTTPS 和 SOCKS 代理，并在正常关闭时恢复原设置。若用户或其他软件在运行期间修改了代理，控制器保留外部修改。非 GNOME 桌面会提示不支持，可使用 TUN 或在应用内配置代理。
+
+开启 TUN 前，sing-box 需要具有 `CAP_NET_ADMIN`。将下面路径替换为实际内核文件；这条命令由用户手动执行：
+
+```bash
+sudo setcap cap_net_admin,cap_net_raw+ep /absolute/path/to/sing-box
+getcap /absolute/path/to/sing-box
+```
+
+更新或替换内核后需要重新设置权限。控制器会在启动或替换内核前检查 TUN 权限；检查失败时保留当前运行的内核。托盘本身以普通用户运行。
+
+开启 `Start with Linux` 会写入 `${XDG_CONFIG_HOME:-~/.config}/autostart/sing-box-drover.desktop`。控制器移动路径后，请重新开启自启动。
 
 ## 配置要求 (config.json)
 
@@ -101,5 +117,11 @@
   # 若内核也是从浏览器直接下载的，同样对其执行：
   xattr -cr /path/to/sing-box
   ```
+- **Linux 没有托盘图标？**
+  确认 GTK 3、AppIndicator 库和桌面托盘宿主均可用，并从桌面终端启动控制器查看错误。
+- **Linux 系统代理提示不支持？**
+  当前实现只接入 GNOME GSettings。其他桌面可使用 TUN，或在应用中填入 sing-box 的代理地址。
+- **Linux TUN 提示权限不足？**
+  检查 sing-box 的 `CAP_NET_ADMIN`；替换内核后重新设置，参见上面的 Linux 说明。
 - **如何彻底清理卸载？**  
   右键托盘菜单选择退出。若开启过开机自启，请先在菜单中取消勾选，之后直接删除整个程序文件夹即可。

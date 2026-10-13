@@ -112,7 +112,8 @@ func LoadOptions(path string) (Options, error) {
 		return o, err
 	}
 	section := ""
-	for _, line := range strings.Split(string(b), "\n") {
+	// Ignore a UTF-8 BOM before the first INI key or section.
+	for _, line := range strings.Split(strings.TrimPrefix(string(b), "\ufeff"), "\n") {
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
 		if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
 			continue

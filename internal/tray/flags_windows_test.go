@@ -7,9 +7,8 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/egoist/mygo"
 	winapi "golang.org/x/sys/windows"
-	"sing-box-drover/internal/app"
-	"sing-box-drover/internal/clash"
 )
 
 func TestFlagAtlasContainsGeneratedAssets(t *testing.T) {
@@ -23,14 +22,6 @@ func TestFlagAtlasContainsGeneratedAssets(t *testing.T) {
 	if flagPixels("ZZ") != nil {
 		t.Fatal("flag atlas unexpectedly contains the unknown ZZ code")
 	}
-}
-
-func TestCreateFlagBitmap(t *testing.T) {
-	bitmap := createFlagBitmap("US")
-	if bitmap == 0 {
-		t.Fatal("createFlagBitmap returned a null HBITMAP")
-	}
-	deleteObject.Call(bitmap)
 }
 
 func TestCreateSelectorBitmap(t *testing.T) {
@@ -147,84 +138,69 @@ func TestUseSharedCheckAndBitmapColumn(t *testing.T) {
 	}
 }
 
-func TestSetMenuItemBitmap(t *testing.T) {
-	menu, _, _ := createPopupMenu.Call()
-	if menu == 0 {
-		t.Fatal("CreatePopupMenu returned a null HMENU")
+func TestNativePopupRendersFlagsAndChecks(t *testing.T) {
+	items := []*mygo.MenuItem{
+		{ID: "selector:0:0", Label: "🇺🇸 node", Type: mygo.MenuItemCheckbox},
+		{ID: "selector:0:1", Label: "🇺🇸 node", Type: mygo.MenuItemCheckbox, Checked: true},
 	}
-	defer destroyMenu.Call(menu)
-
-	text, err := winapi.UTF16PtrFromString("test")
+	popup, err := newNativePopupMenu(mygo.NewMenu(items))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, _, _ := appendMenu.Call(menu, mfString, 1, uintptr(unsafe.Pointer(text))); ok == 0 {
-		t.Fatal("AppendMenuW failed")
-	}
-	bitmap := createFlagBitmap("US")
-	if bitmap == 0 {
-		t.Fatal("createFlagBitmap returned a null HBITMAP")
-	}
-	defer deleteObject.Call(bitmap)
-	if !setMenuItemBitmap(menu, 1, bitmap) {
-		t.Fatal("SetMenuItemInfoW failed to attach the bitmap")
-	}
-}
-
-func TestSelectorDisplayInfoRemovesExistingFlag(t *testing.T) {
-	text, code := selectorDisplayInfo("mysub/🇺🇸 serv xtls-reality")
-	if text != "mysub/ serv xtls-reality" || code != "US" {
-		t.Fatalf("selectorDisplayInfo returned (%q, %q)", text, code)
-	}
-}
-
-func TestSelectorOptionTextDisplaysResolvedRuntimeGroup(t *testing.T) {
-	selector := clash.Selector{Name: "proxy", Now: "🎈 自动选择", ResolvedNow: "node-b"}
-	if got := selectorOptionText(selector, selector.Now); got != "🎈 自动选择（当前：node-b）" {
-		t.Fatalf("selectorOptionText() = %q", got)
-	}
-	if got := selectorOptionText(selector, "node-a"); got != "node-a" {
-		t.Fatalf("selectorOptionText() changed an unselected option: %q", got)
+	defer popup.close()
+	getMenuItemInfo := user32.NewProc("GetMenuItemInfoW")
+	for i, item := range items {
+		var text [256]uint16
+		info := menuItemInfo{
+			cbSize:     uint32(unsafe.Sizeof(menuItemInfo{})),
+			fMask:      miimString | miimBitmap | miimState,
+			dwTypeData: &text[0],
+			cch:        uint32(len(text) - 1),
+		}
+		if ok, _, _ := getMenuItemInfo.Call(popup.menu, uintptr(i), 1, uintptr(unsafe.Pointer(&info))); ok == 0 {
+			t.Fatal("GetMenuItemInfoW failed")
+		}
+		if got := winapi.UTF16ToString(text[:]); got != " node" {
+			t.Fatalf("native label = %q, want flag marker replaced by bitmap", got)
+		}
+		if info.hbmpItem == 0 || info.fState&mfChecked != 0 {
+			t.Fatal("native menu must use a composite flag/check bitmap")
+		}
+		if item.Label != "🇺🇸 node" || item.IsChecked() != (i == 1) {
+			t.Fatal("native rendering changed the shared menu item")
+		}
 	}
 }
 
-func TestBuildMenuRejectsInvalidSelectorTextAndReleasesBitmaps(t *testing.T) {
-	tray := &Tray{controller: &app.App{}}
-	menu, err := tray.buildMenu([]clash.Selector{
-		{Name: "valid", All: []string{"US node"}, Now: "US node"},
-		{Name: "invalid", All: []string{"bad\x00node"}, Now: "bad\x00node"},
-	})
-	if menu != 0 {
-		destroyMenu.Call(menu)
-		t.Fatal("buildMenu returned a menu after rejecting selector text")
-	}
-	if err == nil || !strings.Contains(err.Error(), "selector item") {
-		t.Fatalf("buildMenu() error = %v, want selector item encoding error", err)
-	}
-	if len(tray.menuBitmaps) != 0 {
-		t.Fatalf("failed menu retained %d bitmap handles", len(tray.menuBitmaps))
-	}
-}
-
-func TestBuildMenuRejectsInvalidSelectorGroupText(t *testing.T) {
-	tray := &Tray{controller: &app.App{}}
-	menu, err := tray.buildMenu([]clash.Selector{
-		{Name: "bad\x00group", All: []string{"node"}, Now: "node"},
-	})
-	if menu != 0 {
-		destroyMenu.Call(menu)
-		t.Fatal("buildMenu returned a menu after rejecting selector group text")
-	}
-	if err == nil || !strings.Contains(err.Error(), "selector group") {
-		t.Fatalf("buildMenu() error = %v, want selector group encoding error", err)
-	}
-	if len(tray.menuBitmaps) != 0 {
-		t.Fatalf("failed menu retained %d bitmap handles", len(tray.menuBitmaps))
-	}
-}
-
-func TestOpenURLRejectsUnencodableText(t *testing.T) {
-	if err := openURL("https://example.test/\x00"); err == nil {
-		t.Fatal("openURL accepted a URL containing NUL")
+func TestNativePopupRejectsInvalidTextAndReleasesResources(t *testing.T) {
+	getGuiResources := user32.NewProc("GetGuiResources")
+	for _, invalid := range []*mygo.MenuItem{
+		{ID: "selector:0:1", Label: "bad\x00node"},
+		{Label: "bad\x00group", Submenu: []*mygo.MenuItem{{Label: "node"}}},
+		{Label: "valid", Submenu: []*mygo.MenuItem{{Label: "bad\x00child"}}},
+		{Label: string([]byte{0xff})},
+	} {
+		menu := mygo.NewMenu([]*mygo.MenuItem{
+			{ID: "selector:0:0", Label: "🇺🇸 node", Type: mygo.MenuItemCheckbox},
+			invalid,
+		})
+		var before [2]uintptr
+		for kind := range before {
+			before[kind], _, _ = getGuiResources.Call(^uintptr(0), uintptr(kind))
+		}
+		popup, err := newNativePopupMenu(menu)
+		if popup != nil {
+			popup.close()
+			t.Fatal("invalid menu unexpectedly produced a native popup")
+		}
+		if err == nil || !strings.Contains(err.Error(), "invalid native menu item text") {
+			t.Fatalf("newNativePopupMenu() error = %v", err)
+		}
+		for kind, count := range before {
+			after, _, _ := getGuiResources.Call(^uintptr(0), uintptr(kind))
+			if after != count {
+				t.Fatalf("invalid menu leaked native resources (kind=%d): before=%d after=%d", kind, count, after)
+			}
+		}
 	}
 }

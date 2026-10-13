@@ -92,7 +92,6 @@ var flagAtlasData []byte
 var (
 	gdi32              = winapi.NewLazySystemDLL("gdi32.dll")
 	createDIBSection   = gdi32.NewProc("CreateDIBSection")
-	setDIBits          = gdi32.NewProc("SetDIBits")
 	getDIBits          = gdi32.NewProc("GetDIBits")
 	gdiFlush           = gdi32.NewProc("GdiFlush")
 	createCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
@@ -160,145 +159,46 @@ func useSharedCheckAndBitmapColumn(menu uintptr) bool {
 	return ok != 0
 }
 
-// appendSelectorItem replaces the first country marker in the visible menu
-// text; the caller keeps the original selector value for command routing. A native
-// bitmap from the bundled asset atlas keeps flags visible even when the
-// Windows menu font renders regional-indicator emoji as plain letters. Items
-// with a country marker use one composite bitmap: the system check glyph is
-// drawn in the first gutter and the flag starts after a fixed gap. This keeps
-// the familiar checkmark while keeping it separate from the flag within the
-// shared bitmap column.
-func (t *Tray) appendSelectorItem(menu uintptr, menuFlags uint32, id uint32, value string, cache map[selectorBitmapKey]uintptr) error {
-	text, code := selectorDisplayInfo(value)
-	if text == "" {
-		text = value
-	}
-	ptr, err := winapi.UTF16PtrFromString(text)
+// appendSelectorItem attaches the bundled flag and native check glyph without
+// changing the shared menu item or the selector value used by its callback.
+func (p *nativePopupMenu) appendSelectorItem(menu uintptr, menuFlags uint32, id uint32, value string) error {
+	ptr, err := winapi.UTF16PtrFromString(value)
 	if err != nil {
 		return fmt.Errorf("encode selector item: %w", err)
 	}
-	checked := menuFlags&mfChecked != 0
-	itemFlags := menuFlags
-	if code != "" {
-		// MNS_CHECKORBMP-style menus draw either the native check or hbmpItem.
-		// The composite bitmap contains the check for flagged selector items.
-		itemFlags &^= mfChecked
-	}
-	if ok, _, _ := appendMenu.Call(menu, uintptr(itemFlags), uintptr(id), uintptr(unsafe.Pointer(ptr))); ok == 0 {
+	if ok, _, _ := appendMenu.Call(menu, uintptr(menuFlags), uintptr(id), uintptr(unsafe.Pointer(ptr))); ok == 0 {
 		return errors.New("AppendMenuW failed for selector item")
 	}
+	text, code := selectorDisplayInfo(value)
 	if code == "" {
 		return nil
 	}
-	key := selectorBitmapKey{code: code, checked: checked}
-	bmp, exists := cache[key]
+	key := selectorBitmapKey{code: code, checked: menuFlags&mfChecked != 0}
+	bitmap, exists := p.bitmaps[key]
 	if !exists {
-		bmp = createSelectorBitmap(code, checked)
-		cache[key] = bmp
-		if bmp != 0 {
-			t.menuBitmaps = append(t.menuBitmaps, bmp)
-		}
+		bitmap = createSelectorBitmap(code, key.checked)
+		p.bitmaps[key] = bitmap
 	}
-	if bmp != 0 && setMenuItemBitmap(menu, uintptr(id), bmp) {
-		return nil
+	if bitmap == 0 {
+		return fmt.Errorf("create selector bitmap for %s failed", code)
 	}
-	if checked {
-		// If the composite bitmap cannot be attached, restore the native check
-		// before falling back to the original text.
-		setMenuItemState(menu, uintptr(id), mfChecked)
+	ptr, err = winapi.UTF16PtrFromString(text)
+	if err != nil {
+		return fmt.Errorf("encode selector display text: %w", err)
 	}
-	// Keep a visible fallback if creating or attaching the bitmap failed.
-	if text != value {
-		fallback, fallbackErr := winapi.UTF16PtrFromString(value)
-		if fallbackErr == nil {
-			info := menuItemInfo{
-				cbSize:     uint32(unsafe.Sizeof(menuItemInfo{})),
-				fMask:      miimString,
-				dwTypeData: fallback,
-			}
-			setMenuItemInfo.Call(menu, uintptr(id), 0, uintptr(unsafe.Pointer(&info)))
-		}
+	// Replace text, native check state and bitmap together: the bitmap carries
+	// the check glyph, and a failed attachment keeps the original text/state.
+	info := menuItemInfo{
+		cbSize:     uint32(unsafe.Sizeof(menuItemInfo{})),
+		fMask:      miimString | miimState | miimBitmap,
+		fState:     menuFlags &^ mfChecked,
+		dwTypeData: ptr,
+		hbmpItem:   bitmap,
+	}
+	if ok, _, _ := setMenuItemInfo.Call(menu, uintptr(id), 0, uintptr(unsafe.Pointer(&info))); ok == 0 {
+		return errors.New("SetMenuItemInfoW failed for selector bitmap")
 	}
 	return nil
-}
-
-func setMenuItemBitmap(menu, id, bitmap uintptr) bool {
-	info := menuItemInfo{
-		cbSize:   uint32(unsafe.Sizeof(menuItemInfo{})),
-		fMask:    miimBitmap,
-		hbmpItem: bitmap,
-	}
-	ok, _, _ := setMenuItemInfo.Call(menu, id, 0, uintptr(unsafe.Pointer(&info)))
-	return ok != 0
-}
-
-func setMenuItemState(menu, id uintptr, state uint32) bool {
-	info := menuItemInfo{
-		cbSize: uint32(unsafe.Sizeof(menuItemInfo{})),
-		fMask:  miimState,
-		fState: state,
-	}
-	ok, _, _ := setMenuItemInfo.Call(menu, id, 0, uintptr(unsafe.Pointer(&info)))
-	return ok != 0
-}
-
-func (t *Tray) releaseMenuBitmaps() {
-	for _, bitmap := range t.menuBitmaps {
-		if bitmap != 0 {
-			deleteObject.Call(bitmap)
-		}
-	}
-	t.menuBitmaps = nil
-}
-
-func createFlagBitmap(code string) uintptr {
-	source := flagPixels(code)
-	if len(source) != flagWidth*flagHeight*4 {
-		return 0
-	}
-
-	var bits uintptr
-	info := bitmapInfo{
-		header: bitmapInfoHeader{
-			size:        uint32(unsafe.Sizeof(bitmapInfoHeader{})),
-			width:       flagWidth,
-			height:      -flagHeight, // top-down DIB
-			planes:      1,
-			bitCount:    32,
-			compression: biRGB,
-		},
-	}
-	hbitmap, _, _ := createDIBSection.Call(
-		0,
-		uintptr(unsafe.Pointer(&info)),
-		dibRGBColors,
-		uintptr(unsafe.Pointer(&bits)),
-		0,
-		0,
-	)
-	if hbitmap == 0 || bits == 0 {
-		return 0
-	}
-
-	pixels := make([]uint32, flagWidth*flagHeight)
-	background := menuColor()
-	for i := range pixels {
-		offset := i * 4
-		pixels[i] = blendFlagPixel(source[offset], source[offset+1], source[offset+2], source[offset+3], background)
-	}
-	if result, _, _ := setDIBits.Call(
-		0,
-		hbitmap,
-		0,
-		flagHeight,
-		uintptr(unsafe.Pointer(&pixels[0])),
-		uintptr(unsafe.Pointer(&info)),
-		dibRGBColors,
-	); result == 0 {
-		deleteObject.Call(hbitmap)
-		return 0
-	}
-	return hbitmap
 }
 
 func createSelectorBitmap(code string, checked bool) uintptr {
@@ -333,6 +233,9 @@ func createSelectorBitmap(code string, checked bool) uintptr {
 		0,
 	)
 	if hbitmap == 0 || bits == nil {
+		if hbitmap != 0 {
+			deleteObject.Call(hbitmap)
+		}
 		return 0
 	}
 

@@ -18,20 +18,42 @@ jobs:
           - name: Windows amd64
             os: windows-latest
             platform: windows
+            artifact: windows-amd64
           - name: macOS universal
             os: macos-latest
             platform: macos
+            artifact: macos-universal
+          - name: Linux amd64
+            os: ubuntu-latest
+            platform: linux
+            arch: amd64
+            artifact: linux-amd64
+          - name: Linux arm64
+            os: ubuntu-latest
+            platform: linux
+            arch: arm64
+            artifact: linux-arm64
     runs-on: ${{ matrix.os }}
+    env:
+      GOTOOLCHAIN: go1.27.1
+      CGO_ENABLED: "0"
 
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 安装 Go 1.25.14
+      - name: 安装 Go 1.27.1
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25.14"
+          go-version: "1.27.1"
           cache: true
+
+      - name: 准备 Windows Go 内存补丁
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          overlay=$(go run ./tools/go-overlay -output "$RUNNER_TEMP/go-overlay/overlay.json")
+          echo "GOFLAGS=-overlay=$overlay" >> "$GITHUB_ENV"
 
       - name: 检查格式
         shell: bash
@@ -91,10 +113,27 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$stage" "$package"
           (cd dist && shasum -a 256 "$(basename "$package")" > "$(basename "$package").sha256")
 
+      - name: 构建 Linux 程序
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          GOARCH: ${{ matrix.arch }}
+        run: ./scripts/build-linux.sh build/sing-box-drover
+
+      - name: 打包 Linux 发布包
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          package="$GITHUB_WORKSPACE/dist/sing-box-drover-$version-linux-${{ matrix.arch }}.tar.gz"
+          mkdir -p dist
+          tar -C build -czf "$package" sing-box-drover sing-box-drover.ini
+          (cd dist && sha256sum "$(basename "$package")" > "$(basename "$package").sha256")
+
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.platform }}
+          name: release-${{ matrix.artifact }}
           path: dist/*
           if-no-files-found: error
 
