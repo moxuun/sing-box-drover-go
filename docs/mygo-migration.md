@@ -36,7 +36,9 @@ mygo v0.4.8 要求 Go 1.27.1。该版本标准库仍在 `crypto/internal/fips140
 
 [golang/go#81956](https://github.com/golang/go/issues/81956) 记录了 Windows 私有提交内存增加的问题。这不等于固定增加同样的常驻工作集，也不是持续泄漏；单独设置 `GOFIPS140=off` 或 `GODEBUG=fips140=off` 不会移除静态缓冲区。
 
-`tools/go-overlay/main.go` 使用 issue 中的 `sync.OnceValue` 分配方式，为 Windows 构建生成临时 overlay，保留一次分配、后续复用及原有随机数实现。它只接受 Go 1.27.1 及已核对的源码 SHA-256：
+该缓冲区按 `//go:build !wasm` 编译，不限于 Windows：本工作区实测 Linux amd64 的 `.noptrbss` 为 `0x2020320`（32.1 MiB），macOS arm64/amd64 的 `__noptrbss` 为 `0x200ea98`/`0x200e8a0`（各约 32.06 MiB）。Linux 与 macOS 按需分页，未触碰时不占常驻内存（强制初始化加密后该 VMA 仍只有 72 kB Rss），因此三端都应用同一 overlay，使行为一致并消除低内存环境下 `exec` 即被 SIGKILL 的风险（见 [golang/go#81505](https://github.com/golang/go/issues/81505)，该 issue 仍为 OPEN）。
+
+`tools/go-overlay/main.go` 使用 issue 中的 `sync.OnceValue` 分配方式生成临时 overlay，保留一次分配、后续复用及原有随机数实现。它只接受 Go 1.27.1 及已核对的源码 SHA-256：
 
 ```text
 bd3c834a29e31c93e56d81da54d4a874561814a86550de1456c8d6d40a9c5fda
@@ -46,7 +48,9 @@ bd3c834a29e31c93e56d81da54d4a874561814a86550de1456c8d6d40a9c5fda
 
 `scripts/build.ps1` 设置并恢复构建环境，固定 `GOFIPS140=off`，自动生成 overlay 后编译。生成器同时检查进程环境和有效的 `go env GOFIPS140`，拒绝启用 FIPS 的配置。用户运行发布程序时也应保持 FIPS 关闭；该临时改动不声称满足 FIPS 验证要求。
 
-Go 禁止 overlay 替换模块缓存中的文件，包括自动下载的工具链。Windows 脚本发现这种情况时，把工具链复制到 `output/.toolchains/go1.27.1`，使用副本生成 overlay 和构建，并保留原缓存。
+`scripts/go-overlay.sh` 为两个 shell 构建脚本提供相同的准备步骤：解析工具链、生成 overlay，并导出 `GO_BINARY`、`GO_OVERLAY_FILE` 与 `GOFLAGS`。overlay 的键必须与构建使用的 GOROOT 一致，否则 Go 会静默忽略替换并产出 32 MiB 二进制；该脚本在生成后校验键是否指向当前 GOROOT，不匹配即失败。
+
+Go 禁止 overlay 替换模块缓存中的文件，包括自动下载的工具链。脚本发现这种情况时，把工具链复制到 `output/.toolchains/go1.27.1`，使用副本生成 overlay 和构建，并保留原缓存。
 
 升级 Go 时先检查 issue 状态和标准库实现，再更新或移除 overlay，不能只改版本号或跳过源码校验。
 
@@ -55,8 +59,9 @@ Go 禁止 overlay 替换模块缓存中的文件，包括自动下载的工具�
 构建脚本和 CI 固定 Go 1.27.1，三端均设置 `CGO_ENABLED=0`。Linux 运行时仍需 GTK 3 和 AppIndicator 库；macOS 的 Universal 打包与 ad-hoc 签名需要在 macOS 上执行。
 
 - `scripts/build.ps1`：Windows amd64，图标、manifest 和内存 overlay。
-- `scripts/build-macos.sh`：macOS arm64/amd64 Universal `.app`，部署目标 13.0。
-- `scripts/build-linux.sh`：Linux amd64 或 arm64，二进制与 INI。
+- `scripts/build-macos.sh`：macOS arm64/amd64 Universal `.app`，部署目标 13.0，含内存 overlay。
+- `scripts/build-linux.sh`：Linux amd64 或 arm64，二进制与 INI，含内存 overlay。
+- `scripts/go-overlay.sh`：三端构建共用的 overlay 准备逻辑。
 - `.github/workflows/ci.yml`：Windows、macOS、Linux 的格式、测试、vet 和构建检查。
 - `.github/workflows/release.yml`：Windows ZIP、macOS Universal ZIP、Linux amd64/arm64 tar.gz 及 SHA-256。
 
@@ -84,5 +89,16 @@ Go 禁止 overlay 替换模块缓存中的文件，包括自动下载的工具�
 | Go 1.27.1 + overlay | `0xB6310`（746,256 字节） | 387,072 字节 |
 
 VirtualSize 减少 33,554,448 字节，约 32 MiB；磁盘原始数据大小相同，所以不能通过 EXE 文件大小判断此问题是否消失。
+
+三端 overlay 接入后，本工作区实测静态缓冲区大小：
+
+| 平台 | 未打补丁 | 应用 overlay |
+| --- | --- | --- |
+| Linux amd64 `.noptrbss` | `0x2020320`（32.1 MiB） | `0x020320`（约 128 KiB） |
+| macOS arm64 `__noptrbss` | `0x200ea98`（32.06 MiB） | `0x000ea88`（约 58 KiB） |
+| macOS amd64 `__noptrbss` | `0x200e8a0`（32.06 MiB） | `0x000e890`（约 58 KiB） |
+| Windows amd64 `.data` VirtualSize | `0x20B6320`（32.7 MiB） | `0xB6310`（约 0.71 MiB） |
+
+`scripts/build-linux.sh` 已在本机使用 Go 1.27.1 完整执行成功，产出的 Linux amd64 二进制 `.noptrbss` 为 `0x020320`。macOS 交叉编译的 arm64/amd64 产物均确认 overlay 生效；`scripts/build-macos.sh` 的 Universal 打包与签名仍需在 macOS 上执行。
 
 上述结果验证编译、共享逻辑、Linux 托盘生命周期和静态数据布局。Windows 私有提交内存、三端真实桌面菜单交互、自启动、提权、GNOME 代理、TUN、休眠恢复及 macOS 签名打包仍需对应系统实机验证。GitHub Actions 尚未在远端执行，未创建发布或标签。

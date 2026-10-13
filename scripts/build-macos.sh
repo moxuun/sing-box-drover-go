@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/go-overlay.sh
+source "$ROOT/scripts/go-overlay.sh"
 OUTPUT="${1:-output/sing-box-drover.app}"
 case "$OUTPUT" in
 	/*) APP="$OUTPUT" ;;
@@ -36,6 +38,7 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$APP_MACOS" "$APP_RESOURCES" "$PACKAGE_DIR"
+prepare_go_overlay "$ROOT"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@MIN_MACOS_VERSION@/$MACOS_MIN_VERSION/g" \
 	"$ROOT/resources/macos/Info.plist" > "$APP_CONTENTS/Info.plist"
 if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -48,7 +51,7 @@ for arch in "${ARCHS[@]}"; do
 	(
 		cd "$ROOT"
 		GOOS=darwin GOARCH="$arch" CGO_ENABLED=0 \
-			go build -trimpath -ldflags="-s -w -macos=$MACOS_MIN_VERSION" -o "$output" ./cmd/sing-box-drover
+			"$GO_BINARY" build -trimpath -ldflags="-s -w -macos=$MACOS_MIN_VERSION" -o "$output" ./cmd/sing-box-drover
 	)
 done
 
