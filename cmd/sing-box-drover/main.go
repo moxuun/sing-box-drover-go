@@ -30,8 +30,11 @@ func run() int {
 		return reportError(err)
 	}
 	if err := tray.Run(controller); err != nil {
+		// Cleanup that failed is a failure of its own: the core may still be running,
+		// so it is reported even when the handoff outcome itself is not a failure and
+		// must not be shown twice.
 		if closeErr := controller.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
+			return reportError(errors.Join(err, closeErr))
 		}
 		// An aborted handoff or one the previous instance was told about is not a
 		// failure of this process: that instance owns the outcome.

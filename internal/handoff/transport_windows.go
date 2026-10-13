@@ -11,7 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -23,6 +25,10 @@ const (
 	// maxFrameBytes bounds one protocol frame. The protocol only carries a kind,
 	// a short reason and a token, so this is generous.
 	maxFrameBytes = 4 << 10
+	// maxReasonBytes bounds the reason a message carries. A reason is user-facing
+	// text and can be a whole core check output, so it is trimmed instead of making
+	// its frame unsendable.
+	maxReasonBytes = 1 << 10
 	// connectInterval paces the retry while the pipe server is still busy.
 	connectInterval = 20 * time.Millisecond
 )
@@ -214,19 +220,31 @@ type pipeConn struct {
 	// writeMu serializes frames: the connection is used by one goroutine at a
 	// time, but a rollback may send while a phase deadline closes the pipe.
 	writeMu sync.Mutex
-	handle  winapi.Handle
-	token   string
-	mu      sync.Mutex
-	closed  bool
+	// handle is atomic because Close races the I/O on purpose: closing the handle
+	// is what unblocks a read that a phase deadline abandoned, so the close cannot
+	// wait for that read. The atomic keeps the close and the I/O from racing on the
+	// field itself, and it lets a write that starts after the close see a closed
+	// connection instead of a handle value the system may have recycled.
+	handle atomic.Uintptr
+	token  string
+	mu     sync.Mutex
+	closed bool
 }
 
 func newPipeConn(handle winapi.Handle, token string) *pipeConn {
-	return &pipeConn{handle: handle, token: token}
+	conn := &pipeConn{token: token}
+	conn.handle.Store(uintptr(handle))
+	return conn
+}
+
+// fileHandle returns the handle this connection is using, or 0 once it is closed.
+func (c *pipeConn) fileHandle() winapi.Handle {
+	return winapi.Handle(c.handle.Load())
 }
 
 func (c *pipeConn) verifyClient(expectedPID int) error {
 	var pid uint32
-	if err := winapi.GetNamedPipeClientProcessId(c.handle, &pid); err != nil {
+	if err := winapi.GetNamedPipeClientProcessId(c.fileHandle(), &pid); err != nil {
 		return fmt.Errorf("identify the handoff client: %w", err)
 	}
 	if int(pid) != expectedPID {
@@ -240,7 +258,7 @@ func (c *pipeConn) verifyServer(expectedPID int) error {
 		return errors.New("the handoff pipe owner is unknown")
 	}
 	var pid uint32
-	if err := winapi.GetNamedPipeServerProcessId(c.handle, &pid); err != nil {
+	if err := winapi.GetNamedPipeServerProcessId(c.fileHandle(), &pid); err != nil {
 		return fmt.Errorf("identify the handoff server: %w", err)
 	}
 	if int(pid) != expectedPID {
@@ -261,7 +279,17 @@ func (c *pipeConn) authenticate(ctx context.Context) error {
 	return nil
 }
 
+// trimReason shortens a reason to what a frame can carry. It never cuts a rune in
+// half: a reason is shown to a user.
+func trimReason(reason string) string {
+	if len(reason) <= maxReasonBytes {
+		return reason
+	}
+	return strings.ToValidUTF8(reason[:maxReasonBytes], "") + "..."
+}
+
 func (c *pipeConn) Send(message Message) error {
+	message.Reason = trimReason(message.Reason)
 	payload, err := json.Marshal(message)
 	if err != nil {
 		return fmt.Errorf("encode handoff message: %w", err)
@@ -278,11 +306,12 @@ func (c *pipeConn) Send(message Message) error {
 func (c *pipeConn) write(frame []byte) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	if c.isClosed() {
+	handle := c.fileHandle()
+	if handle == 0 {
 		return io.ErrClosedPipe
 	}
 	var written uint32
-	if err := winapi.WriteFile(c.handle, frame, &written, nil); err != nil {
+	if err := winapi.WriteFile(handle, frame, &written, nil); err != nil {
 		return err
 	}
 	if int(written) != len(frame) {
@@ -336,9 +365,15 @@ func (c *pipeConn) read() (Message, error) {
 }
 
 func (c *pipeConn) readFull(buffer []byte) error {
+	// The handle is read once: Close may close it while this read is blocked, which
+	// is what makes the read return instead of hanging.
+	handle := c.fileHandle()
+	if handle == 0 {
+		return io.EOF
+	}
 	for read := 0; read < len(buffer); {
 		var count uint32
-		err := winapi.ReadFile(c.handle, buffer[read:], &count, nil)
+		err := winapi.ReadFile(handle, buffer[read:], &count, nil)
 		if count > 0 {
 			read += int(count)
 		}
@@ -358,12 +393,6 @@ func (c *pipeConn) readFull(buffer []byte) error {
 	return nil
 }
 
-func (c *pipeConn) isClosed() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.closed
-}
-
 func (c *pipeConn) Close() error {
 	c.mu.Lock()
 	if c.closed {
@@ -371,11 +400,11 @@ func (c *pipeConn) Close() error {
 		return nil
 	}
 	c.closed = true
-	handle := c.handle
-	c.handle = 0
 	c.mu.Unlock()
-	if handle != 0 {
-		_ = winapi.CloseHandle(handle)
+	// Swap before closing so that a write which starts after this point reports a
+	// closed connection rather than using the handle being closed here.
+	if handle := c.handle.Swap(0); handle != 0 {
+		_ = winapi.CloseHandle(winapi.Handle(handle))
 	}
 	return nil
 }

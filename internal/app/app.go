@@ -263,19 +263,24 @@ type Event struct {
 }
 
 type App struct {
-	mu            sync.RWMutex
-	selectorMu    sync.Mutex
-	proxyMu       sync.Mutex
-	executable    string
-	processDir    string
-	options       config.Options
-	source        config.ConfigSource
-	config        config.SingBoxConfig
-	logger        *logging.Logger
-	api           *clash.Client
-	apiReady      bool
-	supervisor    *core.Supervisor
-	instance      *platform.SingleInstance
+	mu         sync.RWMutex
+	selectorMu sync.Mutex
+	proxyMu    sync.Mutex
+	executable string
+	processDir string
+	options    config.Options
+	source     config.ConfigSource
+	config     config.SingBoxConfig
+	logger     *logging.Logger
+	api        *clash.Client
+	apiReady   bool
+	supervisor *core.Supervisor
+	instance   *platform.SingleInstance
+	// handedOver reports that instance ownership was given to a replacement that
+	// could not be confirmed gone. The tray stays up, but a core start from this
+	// process would compete with the replacement's core for the same TUN device
+	// and system proxy.
+	handedOver    bool
 	selectors     []clash.Selector
 	flags         Flags
 	tunActive     bool
@@ -334,6 +339,13 @@ func NewAt(executable string, args []string) (*App, error) {
 	}
 	options, err := config.LoadOptions(iniPath)
 	if err != nil {
+		if flags.HandoffPipe != "" {
+			// This process was started to replace a running controller, which is
+			// waiting for it to report over the handoff connection. Reporting only here
+			// would leave that controller with a readiness timeout instead of the
+			// reason.
+			return nil, reportHandoffFailure(flags, err)
+		}
 		return nil, err
 	}
 	if flags.HandoffPipe != "" {

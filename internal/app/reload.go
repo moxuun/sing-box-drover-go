@@ -108,6 +108,32 @@ func (a *App) checkReplacementCandidate(ctx context.Context, tun, requireTun boo
 	})
 }
 
+// validateOwnCandidate preflights what this process will actually start: the
+// configuration and the core path it already holds. A replacement must not
+// re-read either of them here: the file it re-read could differ from the one its
+// core starts with, and then a change made while the handoff was in flight would
+// be started without ever being checked.
+func (a *App) validateOwnCandidate(ctx context.Context, tun, requireTun bool) error {
+	if tun && !a.config.HasTunInbound {
+		if requireTun {
+			return errors.New("TUN inbound is not configured")
+		}
+		tun = false
+	}
+	candidate := configCandidate{
+		source:    a.source,
+		config:    a.config,
+		api:       a.api,
+		selectors: a.selectors,
+		tun:       tun,
+	}
+	corePath := coreExecutablePath(a.options)
+	_, err := a.checkCandidateConfig(ctx, candidate, func(ctx context.Context, runtimeJSON string) error {
+		return core.CheckExecutable(ctx, corePath, runtimeJSON)
+	})
+	return err
+}
+
 // checkCandidateConfig validates the runtime JSON the candidate would start
 // with. The caller's context bounds the check subprocess, so a cancelled resume
 // does not keep a `sing-box check` alive behind it. A checker override selects a
@@ -177,6 +203,12 @@ func (a *App) restartWithConfig(tun, requireTun bool) error {
 // itself replaces a running core, so a cancelled recovery must be able to stop
 // before it starts either of them.
 func (a *App) restartWithConfigContext(ctx context.Context, tun, requireTun bool) error {
+	// A controller that handed ownership to a replacement that is still running
+	// must not start a core: the replacement may already run one. Checking here
+	// keeps the refusal ahead of the proxy handover and the config swap below.
+	if err := a.ensureControllerOwnership(); err != nil {
+		return err
+	}
 	candidate, err := a.checkConfigCandidateContext(ctx, tun, requireTun)
 	if err != nil {
 		return err

@@ -428,6 +428,33 @@ func TestRunParentRollsBackWhenTheReplacementCannotBeToldToTakeOver(t *testing.T
 	assertEvents(t, events, "parent transfer", "parent release", "parent reacquire", "parent restore")
 }
 
+func TestRunParentBringsTheCoreBackWhenTheTransferFails(t *testing.T) {
+	parent, child := newMemoryPair()
+	defer parent.Close()
+	defer child.Close()
+
+	events := &recorder{}
+	process := &stubProcess{terminated: true}
+	options := parentOptions(t, parent, events, process, nil)
+	// The transfer stops the core before it can fail, so the core still has to come
+	// back. Nothing was released, so ownership is not taken back either: the
+	// replacement never received the proceed that would let it take it.
+	options.Transfer = func(context.Context) error {
+		events.add("parent transfer")
+		return errors.New("stop the current controller")
+	}
+	parentDone := make(chan error, 1)
+	go func() { parentDone <- RunParent(context.Background(), options) }()
+
+	if err := child.Send(Message{Kind: KindReady}); err != nil {
+		t.Fatalf("send ready: %v", err)
+	}
+	if err := <-parentDone; err == nil {
+		t.Fatal("RunParent() succeeded although the transfer failed")
+	}
+	assertEvents(t, events, "parent transfer", "parent restore")
+}
+
 func TestRunParentRequiresATransportAndALaunch(t *testing.T) {
 	if err := RunParent(context.Background(), ParentOptions{}); err == nil {
 		t.Fatal("RunParent() without a transport succeeded")

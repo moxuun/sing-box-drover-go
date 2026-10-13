@@ -127,6 +127,13 @@ func newHandoffTestController(t *testing.T) *handoffTestController {
 		conn:    newFakeConn(),
 		process: &fakeProcess{pid: 4242},
 	}
+	// The controller starts out owning the instance lock: a handoff that keeps it,
+	// gives it up or takes it back is only observable from a state that has it.
+	instance, acquired, err := platform.AcquireSingleInstance("sing-box-drover-handoff-test")
+	if err != nil || !acquired {
+		t.Fatalf("acquire the test instance lock: acquired=%v err=%v", acquired, err)
+	}
+	controller.App.instance = instance
 	controller.handoffTransportFn = func() (handoff.Transport, error) {
 		return fakeTransport{conn: controller.conn}, nil
 	}
@@ -206,6 +213,9 @@ func TestLaunchReplacementTransfersTheControllerToAConfirmedReplacement(t *testi
 	if controller.App.instance != nil {
 		t.Fatal("the controller kept instance ownership after a successful handoff")
 	}
+	if !controller.App.handedOver {
+		t.Fatal("the controller did not record that it handed the instance over")
+	}
 }
 
 func TestLaunchReplacementRestartsTheCoreWhenTheReplacementFails(t *testing.T) {
@@ -244,6 +254,9 @@ func TestLaunchReplacementRestartsTheCoreWhenTheReplacementFails(t *testing.T) {
 	if controller.App.instance == nil {
 		t.Fatal("the controller did not take instance ownership back")
 	}
+	if controller.App.handedOver {
+		t.Fatal("the controller kept the handover recorded after taking ownership back")
+	}
 }
 
 func TestLaunchReplacementKeepsRunningWithoutACoreWhenTheReplacementSurvives(t *testing.T) {
@@ -269,6 +282,20 @@ func TestLaunchReplacementKeepsRunningWithoutACoreWhenTheReplacementSurvives(t *
 	if controller.cores != 0 {
 		t.Fatalf("core restarts = %d, want 0 while the replacement runs", controller.cores)
 	}
+	if controller.App.instance != nil {
+		t.Fatal("the controller kept the instance lock it handed to the replacement")
+	}
+	if !controller.App.handedOver {
+		t.Fatal("the controller did not record that it handed the instance over")
+	}
+	// Ownership only comes back by taking the lock again, so every start path has
+	// to refuse instead of competing with the replacement's core.
+	if err := controller.App.startCore(); !errors.Is(err, ErrHandoffOwnershipLost) {
+		t.Fatalf("startCore() after the handover = %v, want %v", err, ErrHandoffOwnershipLost)
+	}
+	if controller.cores != 0 {
+		t.Fatalf("core restarts = %d, want 0 after the refused start", controller.cores)
+	}
 }
 
 func TestLaunchReplacementKeepsTheCoreWhenTheReplacementIsNotReady(t *testing.T) {
@@ -284,9 +311,16 @@ func TestLaunchReplacementKeepsTheCoreWhenTheReplacementIsNotReady(t *testing.T)
 	case <-time.After(handoffTestTimeout):
 		t.Fatal("launchReplacement() did not return")
 	}
-	// Nothing was handed over, so the core has to keep running untouched.
+	// Nothing was handed over, so the core has to keep running untouched and the
+	// instance lock has to stay here.
 	if controller.cores != 0 {
 		t.Fatalf("core restarts = %d, want 0", controller.cores)
+	}
+	if controller.App.instance == nil {
+		t.Fatal("the controller gave up instance ownership before the replacement was ready")
+	}
+	if controller.App.handedOver {
+		t.Fatal("the controller recorded a handover although nothing was handed over")
 	}
 }
 

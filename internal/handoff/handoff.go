@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 )
 
@@ -136,8 +137,9 @@ type ParentOptions struct {
 	Release func()
 	// Reacquire takes instance ownership back during a rollback.
 	Reacquire func() error
-	// Restore brings the parent's runtime back during a rollback. It runs only
-	// after the replacement is confirmed gone.
+	// Restore brings the parent's runtime back during a rollback. It runs once the
+	// replacement is confirmed gone, or when it is still running but never took
+	// ownership, which is the case for a transfer that failed before the release.
 	Restore func(ctx context.Context) error
 
 	ReadinessTimeout time.Duration
@@ -167,7 +169,9 @@ func (o ParentOptions) log(message string) {
 // A nil result means the replacement owns the controller: the parent must not
 // touch the core, the system proxy or the instance lock again. A non-nil result
 // means the parent still owns them, after a rollback when the failure happened
-// after the transfer.
+// after the transfer - except when that rollback could not confirm that the
+// replacement is gone: the parent then keeps running without the instance lock,
+// and its own start paths have to reject a core start.
 func RunParent(ctx context.Context, options ParentOptions) error {
 	if options.Transport == nil {
 		return errors.New("handoff transport is not configured")
@@ -219,13 +223,18 @@ func RunParent(ctx context.Context, options ParentOptions) error {
 	err = options.Transfer(transferCtx)
 	cancelTransfer()
 	if err != nil {
-		return fmt.Errorf("stop the current controller: %w", err)
+		// The transfer stops the core before it waits for that core's callbacks, so
+		// it can already have stopped it when it fails. Nothing was released yet:
+		// this rollback keeps ownership and only has to bring the core back.
+		return options.rollback(ctx, conn, child, fmt.Errorf("stop the current controller: %w", err), false)
 	}
+	released := false
 	if options.Release != nil {
 		options.Release()
+		released = true
 	}
 	if err := conn.Send(Message{Kind: KindProceed}); err != nil {
-		return options.rollback(ctx, conn, child, fmt.Errorf("tell the replacement to take over: %w", err))
+		return options.rollback(ctx, conn, child, fmt.Errorf("tell the replacement to take over: %w", err), released)
 	}
 
 	// Phase 3: the replacement owns the lock, starts its core and reports back once
@@ -234,34 +243,41 @@ func RunParent(ctx context.Context, options ParentOptions) error {
 	message, err = conn.Receive(startupCtx)
 	cancelStartup()
 	if err != nil {
-		return options.rollback(ctx, conn, child, fmt.Errorf("replacement did not confirm the takeover: %w", err))
+		return options.rollback(ctx, conn, child, fmt.Errorf("replacement did not confirm the takeover: %w", err), released)
 	}
 	switch message.Kind {
 	case KindTakeover:
 		options.log("replacement owns the controller")
 		return nil
 	case KindFailed:
-		return options.rollback(ctx, conn, child, fmt.Errorf("replacement failed: %s", message.Reason))
+		return options.rollback(ctx, conn, child, fmt.Errorf("replacement failed: %s", message.Reason), released)
 	default:
-		return options.rollback(ctx, conn, child, fmt.Errorf("replacement sent an unexpected %q message", message.Kind))
+		return options.rollback(ctx, conn, child, fmt.Errorf("replacement sent an unexpected %q message", message.Kind), released)
 	}
 }
 
 // rollback restores the parent after a failure that happened once the parent had
-// stopped its core.
+// stopped its core. released reports whether instance ownership was given up
+// before the failure.
 //
 // The parent only takes ownership back after the replacement is confirmed gone:
 // restarting the old core while the replacement might still own the lock would
 // give two controllers the same system proxy. When the termination cannot be
-// confirmed the parent stays alive and reports that instead.
-func (o ParentOptions) rollback(ctx context.Context, conn Conn, child LaunchedProcess, cause error) error {
+// confirmed and ownership was released the parent stays alive without a core and
+// reports that instead. When it was not released the core comes back even then:
+// the replacement never received the proceed that would let it start one.
+func (o ParentOptions) rollback(ctx context.Context, conn Conn, child LaunchedProcess, cause error, released bool) error {
 	_ = conn.Send(Message{Kind: KindAbort, Reason: cause.Error()})
 	_ = conn.Close()
 	if !child.Terminated(o.timeout(o.TerminationWait, DefaultTerminationWait)) {
-		return fmt.Errorf("%w; the replacement is still running, so this controller stays up without a core", cause)
+		if released {
+			return fmt.Errorf("%w; the replacement is still running, so this controller stays up without a core or the instance lock", cause)
+		}
+		o.log("replacement is still running without having taken ownership; restarting this controller")
+	} else {
+		o.log("replacement is gone; taking the controller back")
 	}
-	o.log("replacement is gone; taking the controller back")
-	if o.Reacquire != nil {
+	if released && o.Reacquire != nil {
 		if err := o.Reacquire(); err != nil {
 			return errors.Join(cause, fmt.Errorf("take instance ownership back: %w", err))
 		}
@@ -315,7 +331,11 @@ func (o ChildOptions) log(message string) {
 type Session struct {
 	conn    Conn
 	aborted chan struct{}
-	log     func(string)
+	// startupDone reports that the acquisition and the core start finished. Before
+	// that, a closed connection is an abort; after it, the takeover is confirmed by
+	// the user interface and the connection is closed as part of that.
+	startupDone atomic.Bool
+	log         func(string)
 }
 
 // RunChild performs the replacement's side of one handoff.
@@ -335,7 +355,11 @@ func RunChild(ctx context.Context, options ChildOptions) (*Session, error) {
 	if err := options.Validate(ctx); err != nil {
 		// The parent is waiting for readiness and shows the failure, so it has to
 		// learn why instead of waiting for its readiness budget to expire.
-		_ = options.Conn.Send(Message{Kind: KindFailed, Reason: err.Error()})
+		if sendErr := options.Conn.Send(Message{Kind: KindFailed, Reason: err.Error()}); sendErr != nil {
+			// The parent was not told, so this process still has to report the
+			// failure itself: exiting as if it had been shown would lose it.
+			return nil, errors.Join(err, fmt.Errorf("report the handoff failure: %w", sendErr))
+		}
 		return nil, fmt.Errorf("%w: %w", ErrReported, err)
 	}
 	if err := options.Conn.Send(Message{Kind: KindReady}); err != nil {
@@ -350,7 +374,7 @@ func RunChild(ctx context.Context, options ChildOptions) (*Session, error) {
 	switch message.Kind {
 	case KindProceed:
 	case KindAbort:
-		return nil, fmt.Errorf("the previous instance aborted the handoff: %s", message.Reason)
+		return nil, fmt.Errorf("%w: %s", ErrAborted, message.Reason)
 	default:
 		return nil, fmt.Errorf("the previous instance sent an unexpected %q message", message.Kind)
 	}
@@ -363,28 +387,38 @@ func RunChild(ctx context.Context, options ChildOptions) (*Session, error) {
 	// process's core instead of letting it keep running.
 	go session.watchAbort()
 
-	startupCtx, cancelStartup := session.startupContext(ctx)
+	startupCtx, cancelStartup := session.startupContext(ctx, options.timeout(options.StartupTimeout, DefaultStartupTimeout))
 	defer cancelStartup()
 	if err := options.Acquire(startupCtx); err != nil {
-		session.fail(startupCtx, err)
+		if !session.fail(startupCtx, err) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%w: %w", ErrReported, err)
 	}
 	if err := options.Start(startupCtx); err != nil {
-		session.fail(startupCtx, err)
+		if !session.fail(startupCtx, err) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("%w: %w", ErrReported, err)
 	}
 	if session.Aborted() {
 		session.fail(nil, ErrAborted)
 		return nil, ErrAborted
 	}
+	// Everything this process had to take over is taken over. From here on the
+	// takeover is confirmed by the user interface, so a closed connection is no
+	// longer an abort.
+	session.startupDone.Store(true)
 	return session, nil
 }
 
 // startupContext is the context the acquisition and the core start run under. It
-// is cancelled when the parent aborts the handoff, so a replacement that is still
-// starting stops instead of keeping a controller nobody handed over.
-func (s *Session) startupContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	startupCtx, cancel := context.WithCancel(ctx)
+// is cancelled when the parent aborts the handoff, when the connection drops
+// before the takeover was confirmed, and when the start exceeds the budget the
+// caller declared, so a replacement that is still starting stops instead of
+// keeping a controller nobody handed over.
+func (s *Session) startupContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	startupCtx, cancel := context.WithTimeout(ctx, timeout)
 	go func() {
 		select {
 		case <-s.aborted:
@@ -422,19 +456,26 @@ func (s *Session) Abort(reason string) {
 	s.fail(nil, errors.New(reason))
 }
 
-func (s *Session) fail(ctx context.Context, cause error) {
+func (s *Session) fail(ctx context.Context, cause error) bool {
+	told := false
 	if ctx == nil || ctx.Err() == nil {
-		_ = s.conn.Send(Message{Kind: KindFailed, Reason: cause.Error()})
+		told = s.conn.Send(Message{Kind: KindFailed, Reason: cause.Error()}) == nil
 	}
 	s.Close()
+	return told
 }
 
 func (s *Session) watchAbort() {
 	for {
 		message, err := s.conn.Receive(context.Background())
 		if err != nil {
-			// The connection is gone: either the parent gave up on the handoff or the
-			// confirmation closed it. Nothing left to watch.
+			// The connection is gone. Before the takeover was confirmed that means
+			// the parent gave up or died, and nothing will confirm this handoff any
+			// more, so a start that is still running has to stop. After the
+			// confirmation the connection is closed by design.
+			if !s.startupDone.Load() {
+				s.abortOnce()
+			}
 			return
 		}
 		if message.Kind == KindAbort {

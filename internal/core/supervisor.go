@@ -264,9 +264,10 @@ func (s *Supervisor) publishLocked(state State, message string) {
 // state and reporting it must not wait for a slow application handler.
 func (s *Supervisor) enqueue(event Event) {
 	s.notifyMu.Lock()
-	if len(s.notifyQueue) == 0 {
-		// The queue was idle: open a fresh idle channel so waiters block until this
-		// event has been delivered.
+	if s.notifyPending == 0 {
+		// Nothing is queued and nothing is being delivered: open a fresh idle channel
+		// so waiters block until this event has been delivered. The queue being empty
+		// is not enough here: the event being delivered has already left it.
 		s.notifyIdle = make(chan struct{})
 	}
 	s.notifyQueue = append(s.notifyQueue, event)
@@ -310,7 +311,7 @@ func (s *Supervisor) deliverNotifications() {
 			s.notify(event)
 			s.notifyMu.Lock()
 			s.notifyPending--
-			if len(s.notifyQueue) == 0 {
+			if s.notifyPending == 0 {
 				// Only now is the queue idle: an event queued while this one was being
 				// delivered keeps the channel open, so waiters cover it too.
 				close(s.notifyIdle)
@@ -600,9 +601,6 @@ func (s *Supervisor) Stop(ctx context.Context) error {
 	s.publishLocked(StateStopping, "stopping sing-box")
 	s.releasePublish()
 
-	if signalErr != nil && s.logger != nil {
-		s.logger.Log("Core", "graceful stop signal failed: "+signalErr.Error())
-	}
 	wait := stopWaitDuration(ctx, signalErr)
 	stopped := waitForStopCompletion(cleanup, done, ctx, wait, func() { s.forceKill(process) })
 	// Log after the wait: a synchronous file write inside the stop budget could

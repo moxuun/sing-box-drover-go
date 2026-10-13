@@ -18,6 +18,11 @@ import (
 // over, so the replacement exits without a tray.
 var ErrHandoffAborted = handoff.ErrAborted
 
+// ErrHandoffOwnershipLost reports that this controller gave instance ownership to
+// a replacement that is still running, so it must not start a core again: the
+// replacement may already run one.
+var ErrHandoffOwnershipLost = errors.New("this controller handed the instance to a running replacement")
+
 const (
 	// singleInstanceName is the mutex that makes one process the controller.
 	singleInstanceName = "Local\\sing-box-drover"
@@ -94,6 +99,22 @@ func newHandoffReplacement(executable, processDir string, options config.Options
 	return controller, nil
 }
 
+// reportHandoffFailure tells the instance that launched this process why it cannot
+// take over. It covers the failures that happen before the replacement side of the
+// protocol is set up: the previous instance is waiting on the handoff connection,
+// and without this it could only report a readiness timeout instead of the reason.
+func reportHandoffFailure(flags Flags, cause error) error {
+	conn, err := handoff.Connect(context.Background(), flags.HandoffPipe, flags.HandoffToken, flags.HandoffPeer)
+	if err != nil {
+		return errors.Join(cause, fmt.Errorf("connect to the instance being replaced: %w", err))
+	}
+	defer conn.Close()
+	if err := conn.Send(handoff.Message{Kind: handoff.KindFailed, Reason: cause.Error()}); err != nil {
+		return errors.Join(cause, fmt.Errorf("report the handoff failure: %w", err))
+	}
+	return fmt.Errorf("%w: %w", ErrHandoffReported, cause)
+}
+
 // handoffFailure marks a handoff failure that the instance being replaced was
 // already told about: that instance shows the message, so this process exits
 // without reporting the same failure a second time.
@@ -114,12 +135,17 @@ func (a *App) validateHandoff(ctx context.Context) error {
 		// and the elevation the previous instance asked for was not granted.
 		return errors.New("the handoff needs administrator elevation")
 	}
-	_, err := a.checkReplacementCandidate(ctx, tun, tun)
-	return err
+	// The configuration and the core this replacement was asked to run are the ones
+	// it already holds: it starts exactly those, so a re-read here could validate a
+	// file that is not the one the core starts with.
+	return a.validateOwnCandidate(ctx, tun, tun)
 }
 
 // startCore starts the core of the configuration this instance holds.
 func (a *App) startCore() error {
+	if err := a.ensureControllerOwnership(); err != nil {
+		return err
+	}
 	start := a.coreStarter
 	if start == nil {
 		start = a.supervisor.Start
@@ -127,9 +153,25 @@ func (a *App) startCore() error {
 	return start(a.runtimeConfig(a.TunActive()))
 }
 
+// ensureControllerOwnership rejects a core start from a controller that handed
+// instance ownership to a replacement. Ownership only comes back by taking the
+// instance lock again, so a start that would otherwise run without it is refused
+// instead of competing with the replacement's core for the TUN device and the
+// system proxy.
+func (a *App) ensureControllerOwnership() error {
+	a.mu.RLock()
+	handedOver := a.handedOver
+	a.mu.RUnlock()
+	if handedOver {
+		return ErrHandoffOwnershipLost
+	}
+	return nil
+}
+
 func (a *App) setInstance(instance *platform.SingleInstance) {
 	a.mu.Lock()
 	a.instance = instance
+	a.handedOver = false
 	a.mu.Unlock()
 }
 
@@ -211,11 +253,14 @@ func (a *App) suspendForHandoff(ctx context.Context) error {
 	return supervisor.Quiesce(ctx)
 }
 
-// releaseInstance gives up instance ownership so the replacement can take it.
+// releaseInstance gives up instance ownership so the replacement can take it. The
+// controller remembers the handover: until the lock is taken back, its own start
+// paths stay refused.
 func (a *App) releaseInstance() {
 	a.mu.Lock()
 	instance := a.instance
 	a.instance = nil
+	a.handedOver = true
 	a.mu.Unlock()
 	if instance != nil {
 		instance.Close()
