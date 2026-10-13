@@ -29,9 +29,20 @@ prepare_go_overlay() {
 	GO_BINARY="$goroot/bin/go"
 	GO_OVERLAY_FILE="$root/output/.go-overlay/overlay.json"
 	mkdir -p "$(dirname "$GO_OVERLAY_FILE")"
+	# The generator is a host tool: it must never be cross-compiled. When GOOS or
+	# GOARCH are exported for the target build (the release workflow exports
+	# GOARCH per matrix entry), `go run` would build the generator for that
+	# target and fail with "exec format error" on the runner.
+	local hostos hostarch
+	hostos="$("$GO_BINARY" env GOHOSTOS)"
+	hostarch="$("$GO_BINARY" env GOHOSTARCH)"
+	if [[ -z "$hostos" || -z "$hostarch" ]]; then
+		echo "Failed to determine the host platform" >&2
+		return 1
+	fi
 	# The generator verifies the toolchain version and the source SHA-256, and
 	# refuses to patch changed source.
-	if ! (cd "$root" && GOROOT="$goroot" GOTOOLCHAIN=local "$GO_BINARY" \
+	if ! (cd "$root" && GOROOT="$goroot" GOTOOLCHAIN=local GOOS="$hostos" GOARCH="$hostarch" "$GO_BINARY" \
 		run ./tools/go-overlay -goroot "$goroot" -output "$GO_OVERLAY_FILE" >/dev/null); then
 		echo "Go memory workaround preparation failed" >&2
 		return 1

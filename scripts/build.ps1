@@ -53,10 +53,23 @@ try {
     $env:GOTOOLCHAIN = "local"
     $GoBinary = Join-Path $GoRoot "bin\go.exe"
 
+    # The generator is a host tool and must never be cross-compiled: GOOS/GOARCH
+    # above target the program being built, and building the generator for that
+    # target fails with "exec format error" unless it happens to match the host.
+    $HostOS = & $GoBinary env GOHOSTOS
+    $HostArch = & $GoBinary env GOHOSTARCH
+    if ($LASTEXITCODE -ne 0 -or -not $HostOS -or -not $HostArch) {
+        throw "Failed to determine the host platform"
+    }
+    $env:GOOS = $HostOS
+    $env:GOARCH = $HostArch
     & $GoBinary run .\tools\go-overlay -goroot $GoRoot -output $OverlayFile
     if ($LASTEXITCODE -ne 0) {
         throw "Go memory workaround preparation failed"
     }
+    # Restore the target platform for the actual build below.
+    $env:GOOS = "windows"
+    $env:GOARCH = "amd64"
     $env:GOFIPS140 = "off"
 
     & $GoBinary run github.com/akavel/rsrc@v0.10.2 `
