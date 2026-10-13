@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"sing-box-drover/internal/clash"
 	"sing-box-drover/internal/config"
 	"sing-box-drover/internal/core"
+	"sing-box-drover/internal/handoff"
 	"sing-box-drover/internal/logging"
 	platform "sing-box-drover/internal/windows"
 )
@@ -27,7 +29,11 @@ var (
 	// ErrRestartHandoff is not a duplicate start. The running instance asked for
 	// a replacement and never released the single instance, so reporting it as a
 	// plain duplicate would exit silently and leave nothing running.
-	ErrRestartHandoff   = errors.New("the previous instance did not stop in time; start sing-box-drover again")
+	ErrRestartHandoff = errors.New("the previous instance did not stop in time; start sing-box-drover again")
+	// ErrHandoffReported reports that this process could not take a running
+	// controller over and that the controller was told why. It shows the failure,
+	// so this process exits without reporting the same problem twice.
+	ErrHandoffReported  = errors.New("handoff failure reported to the previous instance")
 	errControllerClosed = errors.New("controller is closed")
 )
 
@@ -43,20 +49,31 @@ type Flags struct {
 	// one-shot helper runs under whatever account the UAC prompt accepted, which
 	// is not necessarily the user that asked for the change.
 	AutostartOwner string
+	// HandoffPipe, HandoffToken and HandoffPeer carry the connection of a
+	// controller handoff. They are set by the instance that started this one, and
+	// their presence makes this process the replacement of that instance.
+	HandoffPipe  string
+	HandoffToken string
+	HandoffPeer  int
 }
 
 const (
 	// A restart replacement has to outlast the complete close budget of the
-	// instance it replaces. While this was a fixed 10s the handoff could expire
+	// instance it replaces: that instance stops its core, delivers the terminal
+	// state notification (which restores the system proxy) and only then releases
+	// its instance handle. While this was a fixed 10s the handoff could expire
 	// while the old instance was still stopping, and the user was left with
 	// neither a core nor a tray.
-	restartInstanceWait     = core.StopGracePeriod + core.StopCleanupWait + 5*time.Second
+	restartInstanceWait     = core.StopGracePeriod + core.StopCleanupWait + core.NotifyDrainTimeout + 5*time.Second
 	restartInstanceInterval = 50 * time.Millisecond
 	resumeAPIProbeAttempts  = 5
 	resumeAPIProbeInterval  = 750 * time.Millisecond
 	// ResumeRecoveryTimeout covers all bounded API probes and leaves a small
 	// margin for scheduling and response processing.
 	ResumeRecoveryTimeout = 10 * time.Second
+	// optionsFileName is the INI that NewAt reads. A replacement process re-reads
+	// exactly this file, so the preflight for a replacement loads it too.
+	optionsFileName = "sing-box-drover.ini"
 )
 
 func ParseFlags(args []string) Flags {
@@ -82,6 +99,24 @@ func ParseFlags(args []string) Flags {
 			if i+1 < len(args) {
 				i++
 				flags.AutostartOwner = strings.TrimSpace(args[i])
+			}
+		case "handoff-pipe":
+			if i+1 < len(args) {
+				i++
+				flags.HandoffPipe = strings.TrimSpace(args[i])
+			}
+		case "handoff-token":
+			if i+1 < len(args) {
+				i++
+				flags.HandoffToken = strings.TrimSpace(args[i])
+			}
+		case "handoff-peer":
+			if i+1 < len(args) {
+				i++
+				peer, err := strconv.Atoi(strings.TrimSpace(args[i]))
+				if err == nil && peer > 0 {
+					flags.HandoffPeer = peer
+				}
 			}
 		}
 	}
@@ -250,6 +285,9 @@ type App struct {
 	closed        bool
 	apiPollCancel context.CancelFunc
 	events        chan Event
+	// handoff is the session of a controller this process replaced. It stays set
+	// until the tray confirmed the takeover or the controller shut down.
+	handoff *handoff.Session
 
 	// System proxy operations stay injectable so ownership and failure cleanup
 	// can be tested without modifying the machine running the tests.
@@ -259,6 +297,12 @@ type App struct {
 	configChecker       func(string) error
 	coreStarter         func(string) error
 	coreState           func() core.State
+	// handoffLauncher and handoffTransportFn are injectable for the same reason:
+	// a controller handoff needs a trackable replacement and a private channel to
+	// it, and a controller built without them (a test, or a platform without a
+	// handoff transport) launches its replacement without a handoff.
+	handoffLauncher    func(string, bool) (handoff.LaunchedProcess, error)
+	handoffTransportFn func() (handoff.Transport, error)
 }
 
 func New(args []string) (*App, error) {
@@ -271,24 +315,36 @@ func New(args []string) (*App, error) {
 
 func NewAt(executable string, args []string) (*App, error) {
 	processDir := platform.RuntimeDir(executable)
-	options, err := config.LoadOptions(filepath.Join(processDir, "sing-box-drover.ini"))
+	// Flags come first: an autostart update is a one-shot command that only writes
+	// the scheduled task, so a malformed homepage-url or system-proxy-auto in the
+	// INI must not abort it before the flags are handled. Otherwise the scheduled
+	// task can no longer be removed.
+	flags := ParseFlags(args)
+	iniPath := filepath.Join(processDir, optionsFileName)
+	if flags.AutostartEnable || flags.AutostartDisable {
+		options, err := config.LoadOptions(iniPath)
+		if err != nil && !filepath.IsAbs(options.LogFile) {
+			// LoadOptions returns what it parsed before the failing line, but does
+			// not resolve relative paths when it fails. A relative log file would be
+			// written under whatever working directory the helper was started in, so
+			// run the update unlogged instead of somewhere unexpected.
+			options.LogFile = ""
+		}
+		return nil, runAutostartUpdate(options.LogFile, flags)
+	}
+	options, err := config.LoadOptions(iniPath)
 	if err != nil {
 		return nil, err
 	}
-	flags := ParseFlags(args)
-	// An autostart update is a one-shot command, handled before the single
-	// instance is acquired. The elevated helper exists to write the scheduled
-	// task and nothing else: if it took over the running controller instead,
-	// toggling autostart would leave a permanently elevated tray and core
-	// behind, because "/RL LIMITED" only constrains future logon starts and
-	// never demotes a session that is already running.
-	if flags.AutostartEnable || flags.AutostartDisable {
-		return nil, runAutostartUpdate(options.LogFile, flags)
+	if flags.HandoffPipe != "" {
+		// This process was started to replace a running controller. It must not
+		// take the instance or the core over before that controller gives them up.
+		if flags.HandoffPeer <= 0 {
+			return nil, errors.New("handoff launch without a peer process id")
+		}
+		return newHandoffReplacement(executable, processDir, options, flags)
 	}
-	acquire := func() (*platform.SingleInstance, bool, error) {
-		return platform.AcquireSingleInstance("Local\\sing-box-drover")
-	}
-	instance, first, err := acquire()
+	instance, first, err := acquireInstance()
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +355,7 @@ func NewAt(executable string, args []string) (*App, error) {
 		if !flags.Restart {
 			return nil, ErrAlreadyRunning
 		}
-		instance, first, err = retryInstanceAcquisition(acquire, restartInstanceWait, restartInstanceInterval, nil, nil)
+		instance, first, err = retryInstanceAcquisition(acquireInstance, restartInstanceWait, restartInstanceInterval, nil, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -308,43 +364,15 @@ func NewAt(executable string, args []string) (*App, error) {
 		}
 	}
 	logger := logging.New(options.LogFile)
-	source, sbConfig, err := config.ReadValidatedConfig(options.SBConfigFile)
+	app, err := newController(executable, processDir, options, flags, logger)
 	if err != nil {
 		instance.Close()
 		logger.Close()
 		return nil, err
 	}
-	corePath := filepath.Join(options.SBDir, platform.CoreExecutableName())
-	if _, err := os.Stat(corePath); err != nil {
-		instance.Close()
-		logger.Close()
-		return nil, fmt.Errorf("sing-box executable not found: %w", err)
-	}
-	selectors := staticSelectors(sbConfig.Selectors)
-	app := &App{
-		executable: executable,
-		processDir: processDir,
-		options:    options,
-		source:     source,
-		config:     sbConfig,
-		logger:     logger,
-		instance:   instance,
-		selectors:  selectors,
-		flags:      flags,
-		events:     make(chan Event, 32),
-	}
-	if sbConfig.ClashAPI.IsConfigured() {
-		app.api = clash.NewClient(sbConfig.ClashAPI.ExternalController, sbConfig.ClashAPI.Secret)
-	}
-	app.supervisor = core.NewSupervisor(corePath, logger)
-	app.configChecker = app.supervisor.Check
-	app.coreStarter = app.supervisor.Start
-	app.coreState = app.supervisor.State
-	app.supervisor.SetHandler(func(event core.Event) {
-		app.handleCoreEvent(event)
-	})
-	wantTun := startupTunRequested(sbConfig, options, flags)
-	wantProxy := startupProxyRequested(options, flags)
+	app.setInstance(instance)
+	wantTun := app.TunActive()
+	wantProxy := app.StartupProxyRequested()
 	if (wantTun || (wantProxy && platform.SystemProxyRequiresElevation())) && !platform.IsProcessElevated() {
 		if err := app.launchElevatedLocked(wantTun, wantProxy, wantTun); err != nil {
 			_ = app.Close()
@@ -353,12 +381,56 @@ func NewAt(executable string, args []string) (*App, error) {
 		_ = app.Close()
 		return nil, ErrElevationHandoff
 	}
-	app.tunActive = wantTun
-	if err := app.supervisor.Start(app.runtimeConfig(app.tunActive)); err != nil {
+	if err := app.startCore(); err != nil {
 		app.Close()
 		return nil, err
 	}
 	return app, nil
+}
+
+// newController builds a controller from options that are already resolved. It
+// reads and validates the configuration and locates the core, but it takes
+// neither instance ownership nor starts the core: a handoff replacement does both
+// only once the instance it replaces gives them up.
+func newController(executable, processDir string, options config.Options, flags Flags, logger *logging.Logger) (*App, error) {
+	source, sbConfig, err := config.ReadValidatedConfig(options.SBConfigFile)
+	if err != nil {
+		return nil, err
+	}
+	corePath := coreExecutablePath(options)
+	if _, err := os.Stat(corePath); err != nil {
+		return nil, fmt.Errorf("sing-box executable not found: %w", err)
+	}
+	app := &App{
+		executable: executable,
+		processDir: processDir,
+		options:    options,
+		source:     source,
+		config:     sbConfig,
+		logger:     logger,
+		selectors:  staticSelectors(sbConfig.Selectors),
+		flags:      flags,
+		events:     make(chan Event, 32),
+	}
+	if sbConfig.ClashAPI.IsConfigured() {
+		app.api = clash.NewClient(sbConfig.ClashAPI.ExternalController, sbConfig.ClashAPI.Secret)
+	}
+	app.supervisor = core.NewSupervisor(corePath, logger)
+	app.coreStarter = app.supervisor.Start
+	app.coreState = app.supervisor.State
+	app.supervisor.SetHandler(func(event core.Event) {
+		app.handleCoreEvent(event)
+	})
+	app.handoffLauncher = defaultHandoffLauncher
+	app.handoffTransportFn = handoff.DefaultTransport
+	app.tunActive = startupTunRequested(sbConfig, options, flags)
+	return app, nil
+}
+
+// defaultHandoffLauncher starts a replacement through the platform's trackable
+// launcher, which is what lets a handoff wait for it to become ready.
+func defaultHandoffLauncher(params string, elevate bool) (handoff.LaunchedProcess, error) {
+	return platform.LaunchSelfHandoff(params, elevate)
 }
 
 func staticSelectors(values []config.Selector) []clash.Selector {
@@ -519,9 +591,9 @@ func (a *App) Flags() Flags            { return a.flags }
 func (a *App) Events() <-chan Event    { return a.events }
 
 // StartupProxyRequested reports whether this instance should bring the system
-// proxy up. The tray asks the controller instead of recomputing the condition,
-// which is how a handoff that explicitly asked for "off" used to be overruled
-// at startup by the configured default.
+// proxy up. The tray asks the controller instead of recomputing the condition, so
+// a handoff that explicitly asked for "off" is not overruled at startup by the
+// configured default.
 func (a *App) StartupProxyRequested() bool {
 	return startupProxyRequested(a.options, a.flags)
 }
@@ -534,6 +606,14 @@ func (a *App) ensureOpen() error {
 		return errControllerClosed
 	}
 	return nil
+}
+
+// loadOptions re-reads the INI a replacement process would load. A replacement
+// runs NewAt, which reads this file itself, so a preflight that reused the
+// options this instance parsed at startup could validate a different
+// configuration path than the replacement is about to use.
+func (a *App) loadOptions() (config.Options, error) {
+	return config.LoadOptions(filepath.Join(a.processDir, optionsFileName))
 }
 
 func (a *App) RefreshSelectors(ctx context.Context) ([]clash.Selector, error) {
@@ -708,11 +788,16 @@ func (a *App) Restart() error {
 	// Start a replacement controller so repeated restarts do not retain the
 	// old controller's Go heap and runtime resources.
 	tun := a.TunActive()
-	if _, err := a.checkConfigCandidate(tun, false); err != nil {
+	if _, err := a.checkReplacementCandidate(context.Background(), tun, false); err != nil {
 		return err
 	}
 	flags := "-restart" + handoffTunFlags(tun)
-	return a.launchReplacement(flags, platform.IsProcessElevated(), a.SystemProxyActive())
+	// wantProxy stays false: the handoff state comes from the restore result
+	// inside launchReplacement, not from a pre-restore SystemProxyActive(). That
+	// value stays true even when the restore abandoned the settings because the
+	// user changed them externally, and the replacement would then overwrite the
+	// user's settings again.
+	return a.launchReplacement(flags, platform.IsProcessElevated(), false)
 }
 
 // resumeProbeEndedRecovery reports whether a failed resume probe should stop
@@ -819,7 +904,7 @@ func (a *App) RecoverAfterResume(ctx context.Context) error {
 		return err
 	}
 
-	if err := a.restartWithConfig(tun, false); err != nil {
+	if err := a.restartWithConfigContext(ctx, tun, false); err != nil {
 		return err
 	}
 	if logger != nil {
@@ -844,7 +929,7 @@ func (a *App) launchElevatedLocked(tun, proxy, requireTun bool) error {
 	if err := a.ensureOpen(); err != nil {
 		return err
 	}
-	candidate, err := a.checkConfigCandidate(tun, requireTun)
+	candidate, err := a.checkReplacementCandidate(context.Background(), tun, requireTun)
 	if err != nil {
 		return err
 	}
@@ -891,17 +976,30 @@ func (a *App) launchReplacement(flags string, elevated bool, wantProxy bool) err
 	// already knows it, which is a first start that needs elevation and has
 	// nothing active yet; otherwise the state just handed back is the answer.
 	flags += handoffProxyFlags(proxyRestored || wantProxy)
+	// A handoff confirms the replacement before this instance gives anything up,
+	// so a replacement that cannot run leaves this controller untouched. Without a
+	// handoff transport the one-shot launch stays: the replacement then waits for
+	// this instance to exit and release the instance itself.
+	transport, transportErr := a.handoffTransport()
+	if transportErr != nil {
+		if a.logger != nil {
+			a.logger.Log("Handoff", "Launching without a controller handoff: "+transportErr.Error())
+		}
+		return a.launchReplacementOnce(flags, elevated, proxyRestored)
+	}
+	return a.launchHandoff(flags, elevated, proxyRestored, transport)
+}
+
+// launchReplacementOnce starts a replacement that waits for this instance to
+// exit and release the instance, which is all a platform without a handoff
+// transport can offer.
+func (a *App) launchReplacementOnce(flags string, elevated, proxyRestored bool) error {
 	launch := a.selfLauncher
 	if launch == nil {
 		launch = platform.LaunchSelf
 	}
 	if err := launch(flags, elevated); err != nil {
-		if proxyRestored {
-			if restoreErr := a.EnableSystemProxy(); restoreErr != nil {
-				return errors.Join(err, fmt.Errorf("restore system proxy after launch failure: %w", restoreErr))
-			}
-		}
-		return err
+		return a.restoreProxyAfterFailedLaunch(proxyRestored, err)
 	}
 	return nil
 }
@@ -922,37 +1020,54 @@ func (a *App) Close() error {
 	a.selectorMu.Lock()
 	a.proxyMu.Lock()
 	a.mu.Lock()
-	if a.closed {
-		a.mu.Unlock()
-		_, proxyErr := a.restoreSystemProxyLocked()
-		a.proxyMu.Unlock()
-		a.selectorMu.Unlock()
-		return proxyErr
-	}
+	first := !a.closed
 	a.closed = true
 	pollCancel := a.apiPollCancel
 	a.apiPollCancel = nil
 	instance := a.instance
-	a.instance = nil
+	supervisor := a.supervisor
+	session := a.handoff
+	a.handoff = nil
 	a.mu.Unlock()
 	_, proxyErr := a.restoreSystemProxyLocked()
 	a.proxyMu.Unlock()
 	a.selectorMu.Unlock()
-	if pollCancel != nil {
+	if first && pollCancel != nil {
 		pollCancel()
 	}
 	if proxyErr != nil && a.logger != nil {
 		a.logger.Log("System proxy", "Failed to restore system proxy during shutdown: "+proxyErr.Error())
 	}
 	var supervisorErr error
-	if a.supervisor != nil {
-		supervisorErr = a.supervisor.Close()
+	if supervisor != nil {
+		supervisorErr = supervisor.Close()
+		if supervisorErr != nil && a.logger != nil {
+			a.logger.Log("Core", "Failed to stop sing-box during shutdown: "+supervisorErr.Error())
+		}
 	}
-	if instance != nil {
-		instance.Close()
+	if supervisorErr == nil {
+		// Instance ownership is released only once the core is confirmed gone: a
+		// handle closed while its core may still run would let another controller
+		// start and fight over the same system proxy. A stop that could not be
+		// confirmed keeps the handle and the supervisor, so a later Close retries
+		// instead of reporting a clean shutdown.
+		a.mu.Lock()
+		if a.instance == instance {
+			a.instance = nil
+		}
+		a.mu.Unlock()
+		if instance != nil {
+			instance.Close()
+		}
+		if a.logger != nil {
+			a.logger.Close()
+		}
 	}
-	if a.logger != nil {
-		a.logger.Close()
+	if session != nil {
+		// The instance that started this one is waiting for a confirmation that
+		// will not come. Reporting the failure lets it roll back instead of waiting
+		// for its startup budget to expire.
+		session.Abort("the replacement shut down before it confirmed the handoff")
 	}
 	return errors.Join(proxyErr, supervisorErr)
 }

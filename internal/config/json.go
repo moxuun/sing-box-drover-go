@@ -22,23 +22,26 @@ func normalizeJSON(source string) (string, error) {
 	inLineComment := false
 	inBlockComment := false
 	pendingComma := false
+	// lastSignificant is the most recent non-whitespace byte emitted outside a
+	// string. It decides whether a comma may legally appear at this position, so
+	// a leading or doubled comma is rejected instead of being folded away.
+	lastSignificant := byte(0)
 
 	for i := 0; i < len(source); i++ {
 		ch := source[i]
 		if inLineComment {
 			if ch == '\n' || ch == '\r' {
 				inLineComment = false
+			} else {
+				continue
 			}
-			continue
-		}
-		if inBlockComment {
+		} else if inBlockComment {
 			if ch == '*' && i+1 < len(source) && source[i+1] == '/' {
 				inBlockComment = false
 				i++
 			}
 			continue
-		}
-		if inString {
+		} else if inString {
 			b.WriteByte(ch)
 			if escaped {
 				escaped = false
@@ -48,33 +51,45 @@ func normalizeJSON(source string) (string, error) {
 				inString = false
 			}
 			continue
-		}
-
-		if ch == '/' && i+1 < len(source) {
+		} else if ch == '/' && i+1 < len(source) {
 			switch source[i+1] {
 			case '/':
 				inLineComment = true
+				// A comment is dropped, but it still separates the tokens around
+				// it: `tru/* c */e` must not be normalized into `true`.
+				b.WriteByte(' ')
 				i++
 				continue
 			case '*':
 				inBlockComment = true
+				b.WriteByte(' ')
 				i++
 				continue
 			}
+		}
+
+		if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' {
+			// Whitespace is kept: dropping it would splice neighbouring tokens
+			// (`10 80` becoming `1080`) and silently change the configuration.
+			b.WriteByte(ch)
+			continue
 		}
 		if ch == ',' {
 			if pendingComma {
 				return b.String(), errors.New("unexpected consecutive comma")
 			}
+			switch lastSignificant {
+			case 0, '{', '[', ',':
+				// `[,]` and `{,}` are not trailing commas: nothing precedes them.
+				return b.String(), errors.New("unexpected comma")
+			}
 			pendingComma = true
-			continue
-		}
-		if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' {
 			continue
 		}
 		if pendingComma {
 			if ch != '}' && ch != ']' {
 				b.WriteByte(',')
+				lastSignificant = ','
 			}
 			pendingComma = false
 		}
@@ -83,6 +98,7 @@ func normalizeJSON(source string) (string, error) {
 			escaped = false
 		}
 		b.WriteByte(ch)
+		lastSignificant = ch
 	}
 
 	if pendingComma {

@@ -112,7 +112,9 @@ func LoadOptions(path string) (Options, error) {
 		return o, err
 	}
 	section := ""
-	for _, line := range strings.Split(string(b), "\n") {
+	// A UTF-8 BOM in front of the first line would otherwise become part of the
+	// first key/section name and make that line unparsable.
+	for _, line := range strings.Split(strings.TrimPrefix(string(b), "\ufeff"), "\n") {
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
 		if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
 			continue

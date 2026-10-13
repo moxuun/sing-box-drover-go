@@ -1,10 +1,13 @@
 package app
 
 import (
+	"context"
 	"errors"
+	"path/filepath"
 
 	"sing-box-drover/internal/clash"
 	"sing-box-drover/internal/config"
+	"sing-box-drover/internal/core"
 	platform "sing-box-drover/internal/windows"
 )
 
@@ -28,6 +31,10 @@ func (a *App) readConfigCandidate(tun, requireTun bool) (configCandidate, error)
 	if path == "" {
 		path = a.options.SBConfigFile
 	}
+	return a.readConfigCandidateAt(path, tun, requireTun)
+}
+
+func (a *App) readConfigCandidateAt(path string, tun, requireTun bool) (configCandidate, error) {
 	if path == "" {
 		return configCandidate{}, errors.New("configuration file path is empty")
 	}
@@ -56,19 +63,70 @@ func (a *App) readConfigCandidate(tun, requireTun bool) (configCandidate, error)
 	}, nil
 }
 
+// checkConfigCandidate validates the candidate the *current* process would run.
 func (a *App) checkConfigCandidate(tun, requireTun bool) (configCandidate, error) {
+	return a.checkConfigCandidateContext(context.Background(), tun, requireTun)
+}
+
+func (a *App) checkConfigCandidateContext(ctx context.Context, tun, requireTun bool) (configCandidate, error) {
 	candidate, err := a.readConfigCandidate(tun, requireTun)
 	if err != nil {
 		return configCandidate{}, err
 	}
-	check := a.configChecker
-	if check == nil && a.supervisor != nil {
-		check = a.supervisor.Check
+	return a.checkCandidateConfig(ctx, candidate, nil)
+}
+
+// checkReplacementCandidate preflights what a replacement process will actually
+// run. The replacement re-reads the INI in NewAt, so this has to load the same
+// options and the same core executable: validating the file and the binary this
+// instance happens to hold would pass for a replacement that is about to fail on
+// a changed sb-config-file or sb-dir.
+//
+// The guard below only covers callers that build an App without INI options; a
+// controller started by NewAt always has them resolved, and then the INI is what
+// the replacement reads.
+func (a *App) checkReplacementCandidate(ctx context.Context, tun, requireTun bool) (configCandidate, error) {
+	options := a.options
+	if options.SBConfigFile != "" {
+		loaded, err := a.loadOptions()
+		if err != nil {
+			return configCandidate{}, err
+		}
+		options = loaded
 	}
-	if check == nil {
-		return configCandidate{}, errors.New("core configuration checker is not configured")
+	path := options.SBConfigFile
+	if path == "" {
+		path = a.source.FilePath
 	}
-	if err := check(runtimeConfigFor(candidate.config, candidate.tun)); err != nil {
+	candidate, err := a.readConfigCandidateAt(path, tun, requireTun)
+	if err != nil {
+		return configCandidate{}, err
+	}
+	corePath := filepath.Join(options.SBDir, platform.CoreExecutableName())
+	return a.checkCandidateConfig(ctx, candidate, func(ctx context.Context, runtimeJSON string) error {
+		return core.CheckExecutable(ctx, corePath, runtimeJSON)
+	})
+}
+
+// checkCandidateConfig validates the runtime JSON the candidate would start
+// with. The caller's context bounds the check subprocess, so a cancelled resume
+// does not keep a `sing-box check` alive behind it. A checker override selects a
+// different executable; without one the supervisor's own core is used.
+func (a *App) checkCandidateConfig(ctx context.Context, candidate configCandidate, checker func(context.Context, string) error) (configCandidate, error) {
+	runtimeJSON := runtimeConfigFor(candidate.config, candidate.tun)
+	if a.configChecker != nil {
+		if err := a.configChecker(runtimeJSON); err != nil {
+			return configCandidate{}, err
+		}
+		return candidate, nil
+	}
+	if checker == nil {
+		if a.supervisor == nil {
+			return configCandidate{}, errors.New("core configuration checker is not configured")
+		}
+		checker = a.supervisor.CheckContext
+	}
+	if err := checker(ctx, runtimeJSON); err != nil {
 		return configCandidate{}, err
 	}
 	return candidate, nil
@@ -107,9 +165,26 @@ func (a *App) restoreConfigSnapshot(snapshot configSnapshot) {
 	a.mu.Unlock()
 }
 
+// restartWithConfig restarts the core in this process with the configuration
+// this instance holds. It is the entry point for user actions that have no
+// context of their own.
 func (a *App) restartWithConfig(tun, requireTun bool) error {
-	candidate, err := a.checkConfigCandidate(tun, requireTun)
+	return a.restartWithConfigContext(context.Background(), tun, requireTun)
+}
+
+// restartWithConfigContext is restartWithConfig for a caller that can be
+// cancelled. The preflight runs a `sing-box check` subprocess and the reload
+// itself replaces a running core, so a cancelled recovery must be able to stop
+// before it starts either of them.
+func (a *App) restartWithConfigContext(ctx context.Context, tun, requireTun bool) error {
+	candidate, err := a.checkConfigCandidateContext(ctx, tun, requireTun)
 	if err != nil {
+		return err
+	}
+	// Recheck right before the disruptive part: the preflight may have taken long
+	// enough for the caller to give up, and starting a new core then would leave a
+	// core running for a recovery that is already over.
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if candidate.tun && !platform.IsProcessElevated() {

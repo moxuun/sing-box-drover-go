@@ -4,7 +4,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
-$OutputFile = [System.IO.Path]::GetFullPath($OutputPath, $Root)
+# Resolve the output against the repository root without
+# [System.IO.Path]::GetFullPath(path, basePath), which only exists on .NET Core
+# 2.1+ and therefore fails in Windows PowerShell 5.1.
+if ([System.IO.Path]::IsPathRooted($OutputPath)) {
+    $OutputFile = [System.IO.Path]::GetFullPath($OutputPath)
+} else {
+    $OutputFile = [System.IO.Path]::GetFullPath((Join-Path $Root $OutputPath))
+}
 $ResourceFile = Join-Path $Root "cmd\sing-box-drover\resource_windows_amd64.syso"
 $OutputDirectory = Split-Path -Parent $OutputFile
 $BuildEnvironmentNames = @("GOTOOLCHAIN", "GOOS", "GOARCH", "CGO_ENABLED")

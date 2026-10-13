@@ -3,16 +3,12 @@
 package windows
 
 import (
-	"bytes"
-	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 type AutostartState int
@@ -23,10 +19,7 @@ const (
 	AutostartEnabled
 )
 
-const (
-	launchAgentLabel = "com.moxuun.sing-box-drover"
-	launchctlTimeout = 10 * time.Second
-)
+const launchAgentLabel = "com.moxuun.sing-box-drover"
 
 func launchAgentPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -34,28 +27,6 @@ func launchAgentPath() (string, error) {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
 	return filepath.Join(home, "Library", "LaunchAgents", launchAgentLabel+".plist"), nil
-}
-
-func launchctlDomain() string {
-	return fmt.Sprintf("gui/%d", os.Getuid())
-}
-
-func runLaunchctl(args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), launchctlTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "/bin/launchctl", args...)
-	output, err := cmd.CombinedOutput()
-	if ctx.Err() != nil {
-		return output, ctx.Err()
-	}
-	if err != nil {
-		return output, fmt.Errorf("launchctl %s: %w (%s)", strings.Join(args, " "), err, bytes.TrimSpace(output))
-	}
-	return output, nil
-}
-
-func bootoutLaunchAgent() {
-	_, _ = runLaunchctl("bootout", launchctlDomain()+"/"+launchAgentLabel)
 }
 
 func launchAgentXML(executable string) ([]byte, error) {
@@ -96,6 +67,85 @@ func writePlistValue(b *strings.Builder, value string, indent int) error {
 	return nil
 }
 
+// launchAgentElement is one child of the plist's dict: a <key>, a <string>, or
+// an <array> of strings. Others keeps children that are not <string> elements so
+// a value of the wrong type is rejected instead of being skipped.
+type launchAgentElement struct {
+	XMLName xml.Name
+	Value   string               `xml:",chardata"`
+	Strings []string             `xml:"string"`
+	Others  []launchAgentElement `xml:",any"`
+}
+
+// launchAgentPlist is the shape this app writes: <plist><dict>…</dict></plist>.
+type launchAgentPlist struct {
+	XMLName xml.Name `xml:"plist"`
+	Dict    struct {
+		Elements []launchAgentElement `xml:",any"`
+	} `xml:"dict"`
+}
+
+// launchAgentIsEnabled reports whether the plist actually starts this controller
+// at login. A truncated or unrelated plist can still contain the label string, so
+// the whole structure has to hold: children are alternating key/value pairs, the
+// known keys carry the expected value type, Label names this app, the first
+// ProgramArguments entry names a program, and the job is enabled at login.
+// Duplicate keys follow plist semantics: the last value wins.
+func launchAgentIsEnabled(data []byte) bool {
+	var plist launchAgentPlist
+	if err := xml.Unmarshal(data, &plist); err != nil {
+		return false
+	}
+	elements := plist.Dict.Elements
+	if len(elements)%2 != 0 {
+		// A trailing key without a value: the children are not a sequence of
+		// key/value pairs this check can read.
+		return false
+	}
+	label := ""
+	var programs []string
+	runAtLoad := false
+	disabled := false
+	for i := 0; i < len(elements); i += 2 {
+		key, value := elements[i], elements[i+1]
+		if key.XMLName.Local != "key" || value.XMLName.Local == "key" {
+			return false
+		}
+		switch strings.TrimSpace(key.Value) {
+		case "Label":
+			if value.XMLName.Local != "string" {
+				return false
+			}
+			label = strings.TrimSpace(value.Value)
+		case "ProgramArguments":
+			if value.XMLName.Local != "array" || len(value.Others) > 0 {
+				return false
+			}
+			programs = value.Strings
+		case "RunAtLoad":
+			if !isPlistBool(value) {
+				return false
+			}
+			runAtLoad = value.XMLName.Local == "true"
+		case "Disabled":
+			if !isPlistBool(value) {
+				return false
+			}
+			disabled = value.XMLName.Local == "true"
+		}
+	}
+	if label != launchAgentLabel || !runAtLoad || disabled {
+		return false
+	}
+	// The first argument is the program launchd starts; a definition without it
+	// does not start anything.
+	return len(programs) > 0 && strings.TrimSpace(programs[0]) != ""
+}
+
+func isPlistBool(element launchAgentElement) bool {
+	return element.XMLName.Local == "true" || element.XMLName.Local == "false"
+}
+
 func QueryAutostart() (AutostartState, error) {
 	path, err := launchAgentPath()
 	if err != nil {
@@ -108,8 +158,8 @@ func QueryAutostart() (AutostartState, error) {
 	if err != nil {
 		return AutostartUnknown, fmt.Errorf("read launch agent: %w", err)
 	}
-	if !bytes.Contains(data, []byte("<string>"+launchAgentLabel+"</string>")) {
-		return AutostartUnknown, errors.New("launch agent has an unexpected label")
+	if !launchAgentIsEnabled(data) {
+		return AutostartUnknown, errors.New("launch agent does not start sing-box-drover at login")
 	}
 	return AutostartEnabled, nil
 }
@@ -123,7 +173,9 @@ func SetAutostart(enabled bool, owner string) error {
 		return err
 	}
 	if !enabled {
-		bootoutLaunchAgent()
+		// Only the plist is removed. The job launchd already loaded is this very
+		// process, so booting it out would terminate the running tray and its core
+		// instead of just cancelling the next login start.
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove launch agent: %w", err)
 		}

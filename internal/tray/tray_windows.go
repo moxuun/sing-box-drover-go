@@ -203,6 +203,11 @@ func run(controller *app.App) (runErr error) {
 		return err
 	}
 	defer func() { runErr = errors.Join(runErr, tray.close()) }()
+	// The tray is up, so this process can tell the instance it replaced that the
+	// controller is taken over. An error means that instance took it back instead.
+	if err := controller.ConfirmHandoff(); err != nil {
+		return err
+	}
 	if controller.StartupProxyRequested() {
 		if err := controller.EnableSystemProxy(); err != nil {
 			tray.setFault(true)

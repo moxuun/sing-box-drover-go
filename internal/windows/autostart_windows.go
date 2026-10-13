@@ -40,7 +40,10 @@ func taskMissing(output []byte) bool {
 	return false
 }
 
-func runTaskScheduler(args ...string) ([]byte, error) {
+// runTaskScheduler is a variable so tests can replace the Task Scheduler
+// invocation. A test that drives the real command with the fixed task name would
+// operate on the task the user actually has.
+var runTaskScheduler = func(args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), taskSchedulerTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "schtasks.exe", args...)

@@ -123,11 +123,24 @@ func (t *Tray) watchClicks(item *systray.MenuItem, action func()) {
 	}()
 }
 
+// autostartIsEnabled reads the autostart state under the same lock rebuildMenu
+// and toggleAutostart write it with: the click goroutines run outside menuMu.
+func (t *Tray) autostartIsEnabled() bool {
+	t.menuMu.Lock()
+	defer t.menuMu.Unlock()
+	return t.autostartEnabled
+}
+
 func (t *Tray) rebuildMenu(selectors []clash.Selector) {
 	t.menuMu.Lock()
 	defer t.menuMu.Unlock()
 	fingerprint := selectorFingerprint(selectors, t.controller.Options().SelectorMenuLayout)
-	if fingerprint == t.menuFingerprint && t.proxyItem != nil {
+	// The menu structure also depends on whether the configuration has a TUN
+	// inbound: a reload that adds or removes it has to rebuild the items, and the
+	// periodic refresh would otherwise keep taking this early return and leave a
+	// stale menu in place.
+	hasTun := t.controller.HasTunInbound()
+	if fingerprint == t.menuFingerprint && t.proxyItem != nil && (t.tunItem != nil) == hasTun {
 		t.syncMenuChecksLocked()
 		return
 	}
@@ -137,7 +150,7 @@ func (t *Tray) rebuildMenu(selectors []clash.Selector) {
 	checked := t.controller.SystemProxyActive()
 	t.proxyItem = systray.AddMenuItemCheckbox("System Proxy", "Enable or disable the macOS system proxy", checked)
 	t.watchClicks(t.proxyItem, func() { t.toggleProxy(!t.controller.SystemProxyActive()) })
-	if t.controller.HasTunInbound() {
+	if hasTun {
 		t.tunItem = systray.AddMenuItemCheckbox("TUN", "Enable or disable the TUN inbound", t.controller.TunActive())
 		t.watchClicks(t.tunItem, func() { t.toggleTun(!t.controller.TunActive()) })
 	} else {
@@ -175,7 +188,7 @@ func (t *Tray) rebuildMenu(selectors []clash.Selector) {
 		t.autostartEnabled = state == platform.AutostartEnabled
 	}
 	t.autostartItem = systray.AddMenuItemCheckbox("Start with macOS", "Start sing-box-drover when you log in", t.autostartEnabled)
-	t.watchClicks(t.autostartItem, func() { t.toggleAutostart(!t.autostartEnabled) })
+	t.watchClicks(t.autostartItem, func() { t.toggleAutostart(!t.autostartIsEnabled()) })
 	if platform.IsProcessElevated() {
 		t.autostartItem.Disable()
 		t.autostartItem.SetTooltip("Set login startup before enabling TUN or the system proxy")
