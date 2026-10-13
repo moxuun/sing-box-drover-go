@@ -128,10 +128,14 @@ func newHandoffTestController(t *testing.T) *handoffTestController {
 		process: &fakeProcess{pid: 4242},
 	}
 	// The controller starts out owning the instance lock: a handoff that keeps it,
-	// gives it up or takes it back is only observable from a state that has it.
-	instance, acquired, err := platform.AcquireSingleInstance("sing-box-drover-handoff-test")
-	if err != nil || !acquired {
-		t.Fatalf("acquire the test instance lock: acquired=%v err=%v", acquired, err)
+	// gives it up or takes it back is only observable from a state that has it. The
+	// lock is faked so tests do not contend for the real single-instance lock.
+	controller.instanceAcquirer = func() (*platform.SingleInstance, bool, error) {
+		return &platform.SingleInstance{}, true, nil
+	}
+	instance, first, err := controller.instanceAcquirer()
+	if err != nil || !first {
+		t.Fatalf("acquire the test instance lock: acquired=%v err=%v", first, err)
 	}
 	controller.App.instance = instance
 	controller.handoffTransportFn = func() (handoff.Transport, error) {

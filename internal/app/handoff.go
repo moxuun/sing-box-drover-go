@@ -269,7 +269,7 @@ func (a *App) releaseInstance() {
 
 // reacquireInstance takes instance ownership back during a rollback.
 func (a *App) reacquireInstance() error {
-	instance, first, err := acquireInstance()
+	instance, first, err := a.acquireInstance()
 	if err != nil {
 		return err
 	}
@@ -281,6 +281,15 @@ func (a *App) reacquireInstance() error {
 	}
 	a.setInstance(instance)
 	return nil
+}
+
+// acquireInstance takes instance ownership through the configured acquirer. The
+// seam lets a test exercise the handoff without contending for the real lock.
+func (a *App) acquireInstance() (*platform.SingleInstance, bool, error) {
+	if a.instanceAcquirer != nil {
+		return a.instanceAcquirer()
+	}
+	return acquireInstance()
 }
 
 // resumeAfterHandoff brings this instance's runtime back during a rollback. It

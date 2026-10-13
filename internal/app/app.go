@@ -308,6 +308,9 @@ type App struct {
 	// handoff transport) launches its replacement without a handoff.
 	handoffLauncher    func(string, bool) (handoff.LaunchedProcess, error)
 	handoffTransportFn func() (handoff.Transport, error)
+	// instanceAcquirer takes instance ownership. It is injectable so a handoff
+	// test does not contend for the real single-instance lock.
+	instanceAcquirer func() (*platform.SingleInstance, bool, error)
 }
 
 func New(args []string) (*App, error) {
