@@ -263,18 +263,21 @@ func mapObject(value any) map[string]any {
 	return obj
 }
 
+// addDefaultClashAPI makes sure a configuration that exposes selectors also
+// exposes the API the controller switches them through. An experimental block
+// or a clash_api object that is present but unusable is replaced, not trusted:
+// a clash_api without external_controller leaves every selector unswitchable
+// while the menu still lists the nodes, which is worse than an explicit error.
 func addDefaultClashAPI(root map[string]any, cfg *SingBoxConfig) {
 	if !cfg.HasSelector {
 		return
 	}
-	if _, ok := root["experimental"]; !ok {
-		root["experimental"] = map[string]any{}
-	}
 	experimental, ok := root["experimental"].(map[string]any)
 	if !ok {
-		return
+		experimental = map[string]any{}
+		root["experimental"] = experimental
 	}
-	if _, exists := experimental["clash_api"]; exists {
+	if cfg.ClashAPI.IsConfigured() {
 		return
 	}
 	cfg.ClashAPI = ClashAPIConfig{ExternalController: "127.0.0.1:9090", Secret: randomSecret()}
@@ -414,6 +417,12 @@ func CheckSingBoxConfig(cfg SingBoxConfig) error {
 	}
 	if cfg.ProxyPort > 65535 {
 		return errors.New("mixed inbound listen port is out of range")
+	}
+	// A selector the controller cannot reach is a configuration the user cannot
+	// use: every node switch would fail with "Clash API is not configured" while
+	// the menu keeps listing the nodes. Reject it here instead of at click time.
+	if cfg.HasSelector && !cfg.ClashAPI.IsConfigured() {
+		return errors.New("configuration exposes proxy selectors but no usable Clash API: set experimental.clash_api.external_controller")
 	}
 	return nil
 }
