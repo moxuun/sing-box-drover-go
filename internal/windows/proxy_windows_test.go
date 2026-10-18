@@ -53,7 +53,8 @@ func TestSystemProxyRoundTrip(t *testing.T) {
 			t.Errorf("emergency proxy restore: %v", err)
 		}
 	}()
-	if _, err := EnableSystemProxy("127.0.0.1", 10808); err != nil {
+	session, err := EnableSystemProxy("127.0.0.1", 10808)
+	if err != nil {
 		t.Fatalf("enable proxy: %v", err)
 	}
 	applied, err := queryProxySettings()
@@ -61,25 +62,45 @@ func TestSystemProxyRoundTrip(t *testing.T) {
 		t.Fatalf("query applied proxy settings: %v", err)
 	}
 	t.Logf("applied: flags=%#x server=%q bypass=%q pac=%q", applied.flags, applied.server, applied.bypass, applied.autoConfigURL)
+	// Taking the proxy over must not touch the user's exception list, and must
+	// not enable automatic configuration discovery behind their back.
+	if applied.bypass != original.bypass {
+		t.Fatalf("enable changed the bypass list: %q, want %q", applied.bypass, original.bypass)
+	}
+	if want := uint32(proxyTypeProxy); applied.flags != want {
+		t.Fatalf("enabled proxy flags = %#x, want %#x", applied.flags, want)
+	}
+	if applied.autoConfigURL != "" {
+		t.Fatalf("enable left a PAC URL in place: %q", applied.autoConfigURL)
+	}
 
-	cleared, err := RestoreSystemProxy(ProxySession{})
+	cleared, err := RestoreSystemProxy(session)
 	if err != nil {
-		t.Fatalf("clear proxy: %v", err)
+		t.Fatalf("restore proxy: %v", err)
 	}
 	if !cleared {
-		t.Fatal("clearing the system proxy reported no change")
+		t.Fatal("restoring the system proxy reported no change")
 	}
 	current, err := queryProxySettings()
 	if err != nil {
-		t.Fatalf("query cleared proxy settings: %v", err)
+		t.Fatalf("query restored proxy settings: %v", err)
 	}
-	t.Logf("cleared: flags=%#x server=%q bypass=%q pac=%q", current.flags, current.server, current.bypass, current.autoConfigURL)
-	// The official client switches the manual proxy and any explicit PAC URL
-	// off and leaves the strings in the registry alone.
-	if want := uint32(proxyTypeDirect | proxyTypeAutoDetect); current.flags != want {
-		t.Fatalf("proxy flags = %#x, want %#x", current.flags, want)
+	t.Logf("restored: flags=%#x server=%q bypass=%q pac=%q", current.flags, current.server, current.bypass, current.autoConfigURL)
+	// Releasing the proxy puts the captured configuration back. Leaving
+	// DIRECT | AUTO_DETECT behind would turn on WPAD on a machine that was on
+	// plain DIRECT before, and would lose a bypass list the user had set up.
+	if current != original {
+		t.Fatalf("restore produced %+v, want the captured settings %+v", current, original)
 	}
-	if current.server != applied.server || current.bypass != applied.bypass || current.autoConfigURL != applied.autoConfigURL {
-		t.Fatalf("clearing changed the proxy strings: %+v, want %+v", current, applied)
+}
+
+func TestRestoreSystemProxyWithoutCapturedSettingsClearsProxy(t *testing.T) {
+	if os.Getenv("SING_BOX_DROVER_PROXY_INTEGRATION") != "1" {
+		t.Skip("set SING_BOX_DROVER_PROXY_INTEGRATION=1 to temporarily change the current user's proxy")
+	}
+	// A session handed over from a build that captured nothing still has to
+	// release the proxy rather than leave it pointing at a dead port.
+	if _, err := RestoreSystemProxy(ProxySession{}); err != nil {
+		t.Fatalf("restore empty session: %v", err)
 	}
 }
