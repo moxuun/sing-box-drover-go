@@ -176,3 +176,50 @@ func TestReadSingBoxConfigUsesClientReachableHost(t *testing.T) {
 		t.Fatalf("system proxy target = %q, want 127.0.0.1:7890", got)
 	}
 }
+
+func TestReadSingBoxConfigRepairsUnusableClashAPI(t *testing.T) {
+	// A clash_api that is present but has no external_controller leaves every
+	// selector unswitchable while the menu still lists the nodes. It must be
+	// replaced, not trusted.
+	for _, test := range []struct{ name, experimental string }{
+		{name: "clash_api without external_controller", experimental: `"experimental":{"clash_api":{"secret":"x"}}`},
+		{name: "clash_api with empty external_controller", experimental: `"experimental":{"clash_api":{"external_controller":""}}`},
+		{name: "experimental is not an object", experimental: `"experimental":"x"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := `{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":1080}],` +
+				`"outbounds":[{"type":"selector","tag":"proxy","outbounds":["a"]},{"type":"direct","tag":"a"}],` +
+				test.experimental + `}`
+			cfg, err := ReadSingBoxConfig(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !cfg.HasSelector {
+				t.Fatal("selector was not detected")
+			}
+			if !cfg.ClashAPI.IsConfigured() {
+				t.Fatalf("unusable clash_api was kept: %#v", cfg.ClashAPI)
+			}
+			if err := CheckSingBoxConfig(cfg); err != nil {
+				t.Fatalf("repaired config was rejected: %v", err)
+			}
+			if !strings.Contains(cfg.JSONWithTUN, `"external_controller"`) {
+				t.Fatalf("repaired API was not injected: %s", cfg.JSONWithTUN)
+			}
+		})
+	}
+}
+
+func TestCheckSingBoxConfigRejectsSelectorWithoutUsableAPI(t *testing.T) {
+	// The combination itself must be rejected: a selector the controller cannot
+	// reach is a configuration the user cannot use.
+	cfg := SingBoxConfig{ProxyHost: "127.0.0.1", ProxyPort: 1080, HasSelector: true}
+	err := CheckSingBoxConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "clash_api") {
+		t.Fatalf("CheckSingBoxConfig() error = %v, want a clash_api diagnostic", err)
+	}
+	cfg.ClashAPI = ClashAPIConfig{ExternalController: "127.0.0.1:9090"}
+	if err := CheckSingBoxConfig(cfg); err != nil {
+		t.Fatalf("config with a usable API was rejected: %v", err)
+	}
+}
