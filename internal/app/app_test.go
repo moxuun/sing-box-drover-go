@@ -846,6 +846,12 @@ func TestRestartPreservesFeatureState(t *testing.T) {
 				controller.systemProxyRestorer = func(platform.ProxySession) (bool, error) {
 					return true, nil
 				}
+				// The restart turns the proxy back on after the new core starts, so the
+				// enable path must be injected too: the platform implementation fails
+				// on hosts without a system proxy, which would hide the state check.
+				controller.systemProxyEnabler = func(string, int) (platform.ProxySession, error) {
+					return platform.ProxySession{}, nil
+				}
 			}
 
 			if err := controller.Restart(); err != nil {
