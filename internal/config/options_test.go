@@ -7,7 +7,7 @@ import (
 )
 
 func TestDefaultOptionsUseProjectHomepage(t *testing.T) {
-	if got := DefaultOptions().HomepageURL; got != "https://github.com/moxuun/sing-box-dover-go" {
+	if got := DefaultOptions().HomepageURL; got != "https://github.com/moxuun/sing-box-drover-go" {
 		t.Fatalf("default homepage = %q, want project repository", got)
 	}
 }
