@@ -131,7 +131,7 @@
 - `已完成` README 的 4–8 MiB 说明已标注为 Go 1.25.6 的历史样本，不再作为当前版本的性能承诺。
 - `待实机验证` Go 1.25.14 与旧 1.25.6 的内存和完整托盘生命周期尚未做同一条件对比，结论仍需真实 Windows 复测。
 - `待实机验证` 2026-09-12 对当时运行的 Go 1.25.6 产物连续采样约为 30.2 MiB Working Set、19.3 MiB Private Memory、406 handles，与 README 的 4–8 MiB 截图不一致；该产物构建信息指向 `v0.1.5+dirty`，需要用当前提交的正式构建冷启动后按相同口径复测，不能据此认定代码回归或继续沿用旧宣传值。
-- `已完成` 项目名称统一为 `sing-box-drover`：二进制、Windows 发布包和 Release 产物文件名都已从早期的 `sing-box-dover-go` 拼写改回；仓库地址 `moxuun/sing-box-dover-go` 与 Go 模块名 `sing-box-drover` 保持不变。
+- `已完成` 项目名称统一为 `sing-box-drover-go`：二进制、Windows 发布包和 Release 产物文件名都已从早期的 `sing-box-dover-go` 拼写（少一个 `r`）改回；仓库地址 `moxuun/sing-box-drover-go` 与 Go 模块名 `sing-box-drover` 保持不变。
 - `已完成` README 的 Release 徽章指向本仓库 Releases 页面，Build 徽章指向普通 push/PR 的 `ci.yml`。
 - `已完成` 用户文档（`usage_note.md` 与 `README.md`）去人机化重构：精简说教与冗余底层实现科普，聚焦准备文件、快捷操作、配置要点及常见排查；示例 INI 提供中文注释；`AGENTS.md` 只作为本地协作文件，不应上传到仓库。
 - `已完成` 2026-09-12 维护审计在固定 Go 1.25.6 下通过（`gofmt -l cmd internal tools`、`go test -count=1 ./...`、`go vet ./...`）；本条为历史记录，不代表当前工具链版本。
@@ -269,8 +269,8 @@ Linux amd64 `.noptrbss` 从 `0x2020320` 降为 `0x020320`；macOS arm64/amd64
 会在 Windows、macOS 和 Linux runner 上分别运行格式检查、测试、静态检查和构建，再由
 单独的发布任务统一创建 GitHub Release。
 
-Windows 发布包为 `sing-box-drover-v版本-windows-amd64.zip`，包含
-`sing-box-drover.exe` 和 `sing-box-drover.ini`。
+Windows 发布包为 `sing-box-drover-go-v版本-windows-amd64.zip`，包含
+`sing-box-drover-go.exe` 和兼容旧安装的 `sing-box-drover.ini`。
 
 macOS 发布包为 `sing-box-drover-v版本-macos-universal.zip`，包含
 `sing-box-drover.app` 和旁边的 `sing-box-drover.ini`，其中的 Universal

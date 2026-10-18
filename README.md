@@ -11,7 +11,7 @@
 
 1. 从 [Releases](https://github.com/moxuun/sing-box-drover-go/releases) 下载对应平台的产物，或按下文从源码构建。
 2. 将 `sing-box.exe`（Windows）或 `sing-box`（macOS/Linux）、`config.json` 和 `sing-box-drover.ini` 放在控制器旁边。
-3. 运行 `sing-box-drover.exe`、`sing-box-drover.app` 或 Linux 的 `sing-box-drover`。程序无主窗口，常驻托盘。
+3. 运行 `sing-box-drover-go.exe`、`sing-box-drover.app` 或 Linux 的 `sing-box-drover`。程序无主窗口，常驻托盘。
 4. 展开菜单，通过 `System Proxy`、`TUN` 和节点列表控制内核。
 
 更多操作、配置要求及排查方法见[使用说明](docs/usage_note.md)。

@@ -76,7 +76,7 @@ jobs:
       - name: 构建 Windows 程序
         if: matrix.platform == 'windows'
         shell: pwsh
-        run: .\scripts\build.ps1 -OutputPath build\sing-box-drover.exe
+        run: .\scripts\build.ps1 -OutputPath build\sing-box-drover-go.exe
 
       - name: 打包 Windows 发布包
         if: matrix.platform == 'windows'
@@ -84,10 +84,10 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $version = $env:GITHUB_REF_NAME
-          $stage = Join-Path $env:RUNNER_TEMP "sing-box-drover-$version"
-          $package = Join-Path $env:GITHUB_WORKSPACE "dist\sing-box-drover-$version-windows-amd64.zip"
+          $stage = Join-Path $env:RUNNER_TEMP "sing-box-drover-go-$version"
+          $package = Join-Path $env:GITHUB_WORKSPACE "dist\sing-box-drover-go-$version-windows-amd64.zip"
           New-Item -ItemType Directory -Force -Path $stage, dist | Out-Null
-          Copy-Item build\sing-box-drover.exe $stage
+          Copy-Item build\sing-box-drover-go.exe $stage
           Copy-Item examples\sing-box-drover.ini (Join-Path $stage "sing-box-drover.ini")
           Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $package -Force
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $package).Hash.ToLowerInvariant()

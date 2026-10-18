@@ -25,8 +25,8 @@ func TestRunTaskSchedulerQueryIsBounded(t *testing.T) {
 }
 
 func TestAutostartCreateArgsUseLimitedRunLevel(t *testing.T) {
-	args := autostartCreateArgs(`C:\Users\Example User\sing-box-drover.exe`, `DOMAIN\user`)
-	want := []string{"/Create", "/TN", taskName, "/SC", "ONLOGON", "/RU", `DOMAIN\user`, "/IT", "/RL", "LIMITED", "/TR", `"C:\Users\Example User\sing-box-drover.exe"`, "/F"}
+	args := autostartCreateArgs(`C:\Users\Example User\sing-box-drover-go.exe`, `DOMAIN\user`)
+	want := []string{"/Create", "/TN", taskName, "/SC", "ONLOGON", "/RU", `DOMAIN\user`, "/IT", "/RL", "LIMITED", "/TR", `"C:\Users\Example User\sing-box-drover-go.exe"`, "/F"}
 	if len(args) != len(want) {
 		t.Fatalf("schtasks argument count = %d, want %d: %#v", len(args), len(want), args)
 	}

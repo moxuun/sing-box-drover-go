@@ -63,7 +63,7 @@ jobs:
       - name: 验证 Windows 构建
         if: runner.os == 'Windows'
         shell: pwsh
-        run: .\scripts\build.ps1 -OutputPath output\ci\sing-box-drover.exe
+        run: .\scripts\build.ps1 -OutputPath output\ci\sing-box-drover-go.exe
 
       - name: 验证 macOS 构建
         if: runner.os == 'macOS'
