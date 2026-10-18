@@ -11,9 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -65,9 +65,8 @@ func (pipeTransport) Listen() (Listener, error) {
 		Length:             uint32(unsafe.Sizeof(winapi.SecurityAttributes{})),
 		SecurityDescriptor: descriptor,
 	}
-	// One instance, byte mode, blocking: the protocol is strictly alternating and
-	// carries a single connection.
-	handle, err := winapi.CreateNamedPipe(namePtr, winapi.PIPE_ACCESS_DUPLEX, 0, 1, maxFrameBytes, maxFrameBytes, 0, &attributes)
+	// Abort monitoring and takeover confirmation use the same pipe concurrently.
+	handle, err := winapi.CreateNamedPipe(namePtr, winapi.PIPE_ACCESS_DUPLEX|winapi.FILE_FLAG_OVERLAPPED, 0, 1, maxFrameBytes, maxFrameBytes, 0, &attributes)
 	if err != nil {
 		return nil, fmt.Errorf("create handoff pipe: %w", err)
 	}
@@ -127,22 +126,31 @@ func (l *pipeListener) Accept(ctx context.Context, expectedPID int) (Conn, error
 	if handle == 0 {
 		return nil, errors.New("the handoff pipe is closed")
 	}
-	// ConnectNamedPipe blocks until a client connects; run it in a goroutine so
-	// the phase deadline can end the wait by closing the pipe.
-	connected := make(chan error, 1)
-	go func() { connected <- winapi.ConnectNamedPipe(handle, nil) }()
-	select {
-	case err := <-connected:
-		// A client that connected between CreateNamedPipe and ConnectNamedPipe
-		// makes ConnectNamedPipe report ERROR_PIPE_CONNECTED, which is success.
-		if err != nil && !errors.Is(err, winapi.ERROR_PIPE_CONNECTED) {
-			_ = winapi.CloseHandle(handle)
-			return nil, fmt.Errorf("accept the handoff connection: %w", err)
-		}
-	case <-ctx.Done():
+	event, err := winapi.CreateEvent(nil, 1, 0, nil)
+	if err != nil {
 		_ = winapi.CloseHandle(handle)
-		<-connected
-		return nil, ctx.Err()
+		return nil, err
+	}
+	defer winapi.CloseHandle(event)
+	overlap := &winapi.Overlapped{HEvent: event}
+	err = winapi.ConnectNamedPipe(handle, overlap)
+	if errors.Is(err, winapi.ERROR_IO_PENDING) {
+		connected := make(chan error, 1)
+		go func() {
+			var transferred uint32
+			connected <- winapi.GetOverlappedResult(handle, overlap, &transferred, true)
+		}()
+		select {
+		case err = <-connected:
+		case <-ctx.Done():
+			_ = winapi.CancelIoEx(handle, overlap)
+			<-connected
+			err = ctx.Err()
+		}
+	}
+	if err != nil && !errors.Is(err, winapi.ERROR_PIPE_CONNECTED) {
+		_ = winapi.CloseHandle(handle)
+		return nil, fmt.Errorf("accept the handoff connection: %w", err)
 	}
 	conn := newPipeConn(handle, l.token)
 	if err := conn.verifyClient(expectedPID); err != nil {
@@ -192,7 +200,7 @@ func Connect(ctx context.Context, address, token string, serverPID int) (Conn, e
 		return nil, fmt.Errorf("encode handoff pipe name: %w", err)
 	}
 	for {
-		handle, err := winapi.CreateFile(namePtr, winapi.GENERIC_READ|winapi.GENERIC_WRITE, 0, nil, winapi.OPEN_EXISTING, 0, 0)
+		handle, err := winapi.CreateFile(namePtr, winapi.GENERIC_READ|winapi.GENERIC_WRITE, 0, nil, winapi.OPEN_EXISTING, winapi.FILE_FLAG_OVERLAPPED, 0)
 		if err == nil {
 			conn := newPipeConn(handle, token)
 			if err := conn.verifyServer(serverPID); err != nil {
@@ -220,26 +228,18 @@ type pipeConn struct {
 	// writeMu serializes frames: the connection is used by one goroutine at a
 	// time, but a rollback may send while a phase deadline closes the pipe.
 	writeMu sync.Mutex
-	// handle is atomic because Close races the I/O on purpose: closing the handle
-	// is what unblocks a read that a phase deadline abandoned, so the close cannot
-	// wait for that read. The atomic keeps the close and the I/O from racing on the
-	// field itself, and it lets a write that starts after the close see a closed
-	// connection instead of a handle value the system may have recycled.
-	handle atomic.Uintptr
-	token  string
-	mu     sync.Mutex
-	closed bool
+	// os.File uses the runtime poller for overlapped handles, allowing full-duplex
+	// I/O and cancelling pending operations when Close is called.
+	file  *os.File
+	token string
 }
 
 func newPipeConn(handle winapi.Handle, token string) *pipeConn {
-	conn := &pipeConn{token: token}
-	conn.handle.Store(uintptr(handle))
-	return conn
+	return &pipeConn{file: os.NewFile(uintptr(handle), "handoff pipe"), token: token}
 }
 
-// fileHandle returns the handle this connection is using, or 0 once it is closed.
 func (c *pipeConn) fileHandle() winapi.Handle {
-	return winapi.Handle(c.handle.Load())
+	return winapi.Handle(c.file.Fd())
 }
 
 func (c *pipeConn) verifyClient(expectedPID int) error {
@@ -306,15 +306,11 @@ func (c *pipeConn) Send(message Message) error {
 func (c *pipeConn) write(frame []byte) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	handle := c.fileHandle()
-	if handle == 0 {
-		return io.ErrClosedPipe
-	}
-	var written uint32
-	if err := winapi.WriteFile(handle, frame, &written, nil); err != nil {
+	written, err := c.file.Write(frame)
+	if err != nil {
 		return err
 	}
-	if int(written) != len(frame) {
+	if written != len(frame) {
 		return io.ErrShortWrite
 	}
 	return nil
@@ -365,46 +361,14 @@ func (c *pipeConn) read() (Message, error) {
 }
 
 func (c *pipeConn) readFull(buffer []byte) error {
-	// The handle is read once: Close may close it while this read is blocked, which
-	// is what makes the read return instead of hanging.
-	handle := c.fileHandle()
-	if handle == 0 {
-		return io.EOF
-	}
-	for read := 0; read < len(buffer); {
-		var count uint32
-		err := winapi.ReadFile(handle, buffer[read:], &count, nil)
-		if count > 0 {
-			read += int(count)
-		}
-		if err != nil {
-			if read == len(buffer) {
-				return nil
-			}
-			if errors.Is(err, winapi.ERROR_BROKEN_PIPE) || errors.Is(err, winapi.ERROR_PIPE_NOT_CONNECTED) {
-				return io.EOF
-			}
-			return err
-		}
-		if count == 0 {
-			return io.ErrNoProgress
-		}
-	}
-	return nil
+	_, err := io.ReadFull(c.file, buffer)
+	return err
 }
 
 func (c *pipeConn) Close() error {
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
+	err := c.file.Close()
+	if errors.Is(err, os.ErrClosed) {
 		return nil
 	}
-	c.closed = true
-	c.mu.Unlock()
-	// Swap before closing so that a write which starts after this point reports a
-	// closed connection rather than using the handle being closed here.
-	if handle := c.handle.Swap(0); handle != 0 {
-		_ = winapi.CloseHandle(winapi.Handle(handle))
-	}
-	return nil
+	return err
 }

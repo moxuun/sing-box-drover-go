@@ -114,19 +114,20 @@ func Run(controller *app.App) error {
 	return errors.Join(err, t.runErr, t.closeErr)
 }
 
-func (t *Tray) onReady() {
+func (t *Tray) createNativeTray() error {
 	var err error
 	t.native, err = mygo.NewTray(mygo.TrayOptions{
 		Icon:           plainStatusIcon,
 		IconIsTemplate: runtime.GOOS == "darwin",
 	})
 	if err != nil {
-		t.startupFailed(err)
-		return
+		return err
 	}
+	t.menu = nil
+	t.iconKind = trayIconPlain
+	t.tooltip = ""
 	if err := t.rebuildMenu(t.controller.Selectors()); err != nil {
-		t.startupFailed(err)
-		return
+		return err
 	}
 	t.refreshIcon()
 	if runtime.GOOS == "windows" {
@@ -155,6 +156,14 @@ func (t *Tray) onReady() {
 			t.report(err)
 		}
 	})
+	return nil
+}
+
+func (t *Tray) onReady() {
+	if err := t.createNativeTray(); err != nil {
+		t.startupFailed(err)
+		return
+	}
 	mygo.Power.OnResume(func() {
 		if !t.beginResumeRecovery() {
 			return
@@ -559,7 +568,20 @@ func (t *Tray) refreshAutostart() {
 }
 
 func (t *Tray) restart() {
+	// The replacement creates its tray before confirming the handoff.
+	t.onMain(func() {
+		if t.native != nil {
+			t.native.Destroy()
+			t.native = nil
+		}
+	})
 	if err := t.controller.Restart(); err != nil {
+		var trayErr error
+		t.onMain(func() { trayErr = t.createNativeTray() })
+		if trayErr != nil {
+			t.startupFailed(errors.Join(err, trayErr))
+			return
+		}
 		t.report(err)
 		return
 	}
@@ -660,6 +682,9 @@ func (t *Tray) watchEvents() {
 }
 
 func (t *Tray) publishMenu(selectors []clash.Selector) {
+	if t.native == nil {
+		return
+	}
 	if err := t.rebuildMenu(selectors); err != nil {
 		t.fault = true
 		t.refreshIcon()

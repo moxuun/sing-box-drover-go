@@ -4,6 +4,7 @@ package handoff
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -99,6 +100,51 @@ func TestPipeTransportCarriesTheHandoffProtocol(t *testing.T) {
 	}
 }
 
+func TestPipeTransportAllowsSendWhileReceiving(t *testing.T) {
+	listener := listenForTest(t)
+	accepted := acceptInBackground(listener, os.Getpid())
+	child := connectForTest(t, listener, listener.Token())
+	result := <-accepted
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	parent := result.conn
+	defer parent.Close()
+
+	// The replacement watches for aborts while confirming its takeover.
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := child.Receive(context.Background())
+		readDone <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	sent := make(chan error, 1)
+	go func() { sent <- child.Send(Message{Kind: KindTakeover}) }()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	message, err := parent.Receive(ctx)
+	if err != nil {
+		t.Fatalf("takeover blocked behind the abort reader: %v", err)
+	}
+	if message.Kind != KindTakeover {
+		t.Fatalf("received %q, want takeover", message.Kind)
+	}
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-readDone:
+		if err == nil {
+			t.Fatal("pending read succeeded after close")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("close did not cancel the pending read")
+	}
+}
+
 func TestPipeTransportRejectsAnUnauthenticatedClient(t *testing.T) {
 	listener := listenForTest(t)
 	accepted := acceptInBackground(listener, os.Getpid())
@@ -125,7 +171,11 @@ func TestPipeTransportRejectsAConnectionToAnotherProcess(t *testing.T) {
 	listener := listenForTest(t)
 	// The parent is told to expect a different process than the one connecting.
 	accepted := acceptInBackground(listener, os.Getpid()+1)
-	connectForTest(t, listener, listener.Token())
+	// The server may reject the PID before the client sends authentication.
+	child, _ := Connect(context.Background(), listener.Address(), listener.Token(), os.Getpid())
+	if child != nil {
+		defer child.Close()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), handoffDeadline)
 	defer cancel()
@@ -139,6 +189,16 @@ func TestPipeTransportRejectsAConnectionToAnotherProcess(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("Accept() did not reject the connection")
+	}
+}
+
+func TestPipeTransportAcceptDeadlineCancelsPendingConnection(t *testing.T) {
+	listener := listenForTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := listener.Accept(ctx, os.Getpid())
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Accept() = %v, want deadline exceeded", err)
 	}
 }
 
