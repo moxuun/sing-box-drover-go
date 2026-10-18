@@ -319,6 +319,10 @@ type App struct {
 	closed        bool
 	apiPollCancel context.CancelFunc
 	events        chan Event
+	// selectorUpdates wakes a watcher when the cached selector list changed. It is a
+	// capacity-one signal, not a queue: the watcher re-reads the cache, so merging
+	// repeated changes is intended.
+	selectorUpdates chan struct{}
 	// handoff is the session of a controller this process replaced. It stays set
 	// until the tray confirmed the takeover or the controller shut down.
 	handoff *handoff.Session
@@ -330,7 +334,7 @@ type App struct {
 	selfLauncher        func(string, bool) error
 	configChecker       func(string) error
 	tunPrivilegeChecker func(string) error
-	coreStarter         func(string) error
+	coreStarter         func(context.Context, string) error
 	coreState           func() core.State
 	// handoffLauncher and handoffTransportFn are injectable for the same reason:
 	// a controller handoff needs a trackable replacement and a private channel to
@@ -452,15 +456,16 @@ func newController(executable, processDir string, options config.Options, flags 
 		return nil, fmt.Errorf("sing-box executable not found: %w", err)
 	}
 	app := &App{
-		executable: executable,
-		processDir: processDir,
-		options:    options,
-		source:     source,
-		config:     sbConfig,
-		logger:     logger,
-		selectors:  staticSelectors(sbConfig.Selectors),
-		flags:      flags,
-		events:     make(chan Event, 32),
+		executable:      executable,
+		processDir:      processDir,
+		options:         options,
+		source:          source,
+		config:          sbConfig,
+		logger:          logger,
+		selectors:       staticSelectors(sbConfig.Selectors),
+		flags:           flags,
+		events:          make(chan Event, 32),
+		selectorUpdates: make(chan struct{}, 1),
 	}
 	if sbConfig.ClashAPI.IsConfigured() {
 		app.api = clash.NewClient(sbConfig.ClashAPI.ExternalController, sbConfig.ClashAPI.Secret)
@@ -611,6 +616,18 @@ func (a *App) Selectors() []clash.Selector {
 	return cloneSelectors(a.selectors)
 }
 
+// SelectorUpdates reports that the cached selector list changed. Pending signals
+// are merged: the consumer re-reads Selectors, so a burst of changes costs one
+// rebuild and the consumer always ends up on the latest snapshot.
+func (a *App) SelectorUpdates() <-chan struct{} { return a.selectorUpdates }
+
+func (a *App) notifySelectorUpdates() {
+	select {
+	case a.selectorUpdates <- struct{}{}:
+	default:
+	}
+}
+
 func (a *App) HasTunInbound() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -694,6 +711,7 @@ func (a *App) RefreshSelectors(ctx context.Context) ([]clash.Selector, error) {
 	a.selectors = cloneSelectors(fresh)
 	a.apiReady = true
 	a.mu.Unlock()
+	a.notifySelectorUpdates()
 	return a.Selectors(), nil
 }
 
@@ -735,6 +753,7 @@ func (a *App) SwitchSelector(ctx context.Context, selectorName, value string) er
 		}
 	}
 	a.mu.Unlock()
+	a.notifySelectorUpdates()
 	return nil
 }
 

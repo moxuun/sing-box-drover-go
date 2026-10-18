@@ -16,7 +16,6 @@ import (
 
 type ConfigSource struct {
 	FilePath string
-	JSONText string
 }
 
 type Selector struct {
@@ -39,9 +38,11 @@ type SingBoxConfig struct {
 	HasSelector bool
 	// ProxyHost and ProxyPort address the mixed inbound the way a local client
 	// has to reach it, which is not always how the inbound listens.
-	ProxyHost      string
-	ProxyPort      int
-	HasTunInbound  bool
+	ProxyHost     string
+	ProxyPort     int
+	HasTunInbound bool
+	// JSONWithTUN and JSONWithoutTUN are the runtime configuration the core is
+	// started with, not the source file: the raw text is not kept after parsing.
 	JSONWithTUN    string
 	JSONWithoutTUN string
 }
@@ -224,17 +225,6 @@ func readUTF8(data []byte) string {
 		data = data[3:]
 	}
 	return string(data)
-}
-
-func ReadConfigSource(path string) (ConfigSource, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return ConfigSource{}, fmt.Errorf("configuration file not found")
-		}
-		return ConfigSource{}, fmt.Errorf("failed to read configuration file: %w", err)
-	}
-	return ConfigSource{FilePath: path, JSONText: readUTF8(data)}, nil
 }
 
 func valueString(v any) string {

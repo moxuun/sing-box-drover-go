@@ -154,17 +154,23 @@ func (a *App) startCore() error {
 }
 
 func (a *App) startCoreContext(ctx context.Context) error {
+	return a.startRuntimeConfig(ctx, a.runtimeConfig(a.TunActive()))
+}
+
+// startRuntimeConfig is the single place a core start is authorized and issued:
+// cancellation, ownership and the injectable starter all live here, so no caller
+// can start a core with an abandoned context or without the instance lock.
+func (a *App) startRuntimeConfig(ctx context.Context, runtimeJSON string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := a.ensureControllerOwnership(); err != nil {
 		return err
 	}
-	config := a.runtimeConfig(a.TunActive())
 	if a.coreStarter != nil {
-		return a.coreStarter(config)
+		return a.coreStarter(ctx, runtimeJSON)
 	}
-	return a.supervisor.StartContext(ctx, config)
+	return a.supervisor.StartContext(ctx, runtimeJSON)
 }
 
 // ensureControllerOwnership rejects a core start from a controller that handed

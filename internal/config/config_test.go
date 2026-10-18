@@ -77,11 +77,7 @@ func TestReadSingBoxConfigProviderOnlySelectorAddsRuntimeAPI(t *testing.T) {
 	if err := os.WriteFile(path, []byte(input), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	source, err := ReadConfigSource(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := ReadSingBoxConfig(source.JSONText)
+	_, cfg, err := ReadValidatedConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,18 +101,22 @@ func TestReadSingBoxConfigProviderOnlySelectorAddsRuntimeAPI(t *testing.T) {
 	}
 }
 
-func TestReadConfigSourceStripsBOM(t *testing.T) {
+func TestReadValidatedConfigAcceptsBOM(t *testing.T) {
 	dir := t.TempDir()
 	jsonPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(jsonPath, append([]byte{0xef, 0xbb, 0xbf}, []byte(`{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":1}]}`)...), 0o600); err != nil {
+	input := append([]byte{0xef, 0xbb, 0xbf}, []byte(`{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":1}]}`)...)
+	if err := os.WriteFile(jsonPath, input, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	jsonSource, err := ReadConfigSource(jsonPath)
-	if err != nil || strings.HasPrefix(jsonSource.JSONText, "\ufeff") {
-		t.Fatalf("BOM source mismatch: %#v %v", jsonSource, err)
-	}
-	if _, err := ReadSingBoxConfig("\ufeff" + jsonSource.JSONText); err != nil {
+	if _, _, err := ReadValidatedConfig(jsonPath); err != nil {
 		t.Fatalf("BOM JSON should be accepted: %v", err)
+	}
+	stored, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stored) != string(input) {
+		t.Fatalf("loading rewrote the source file: %q", string(stored))
 	}
 }
 

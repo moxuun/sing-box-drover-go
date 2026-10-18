@@ -41,7 +41,7 @@ func TestHandoffAcquisitionHonorsStartupContext(t *testing.T) {
 }
 
 func TestHandoffStartCoreHonorsCancelledContext(t *testing.T) {
-	controller := &App{coreStarter: func(string) error {
+	controller := &App{coreStarter: func(context.Context, string) error {
 		t.Error("cancelled production handoff entered core startup")
 		return nil
 	}}
@@ -301,14 +301,24 @@ func TestRefreshSelectorsKeepsCacheWhenAPIFails(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
-	a := &App{api: clash.NewClient(server.URL, "token"), events: make(chan Event, 1)}
+	a := &App{api: clash.NewClient(server.URL, "token"), events: make(chan Event, 1), selectorUpdates: make(chan struct{}, 1)}
 	first, err := a.RefreshSelectors(context.Background())
 	if err != nil || len(first) != 1 || first[0].Name != "proxy" {
 		t.Fatalf("initial refresh failed: %#v %v", first, err)
 	}
+	select {
+	case <-a.SelectorUpdates():
+	default:
+		t.Fatal("a successful refresh did not publish its selectors")
+	}
 	second, err := a.RefreshSelectors(context.Background())
 	if err == nil || len(second) != 1 || second[0].Now != "香港01" {
 		t.Fatalf("cache was not retained on failure: %#v %v", second, err)
+	}
+	select {
+	case <-a.SelectorUpdates():
+		t.Fatal("a failed refresh published selectors")
+	default:
 	}
 }
 
@@ -833,7 +843,7 @@ func TestRestartPreservesFeatureState(t *testing.T) {
 					privilegesChecked = true
 					return nil
 				},
-				coreStarter: func(runtimeJSON string) error {
+				coreStarter: func(_ context.Context, runtimeJSON string) error {
 					started = runtimeJSON
 					return nil
 				},

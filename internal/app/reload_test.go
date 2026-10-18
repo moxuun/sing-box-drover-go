@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -89,7 +90,7 @@ func TestRestartWithConfigKeepsOldStateWhenPreflightFails(t *testing.T) {
 	}
 	oldSelectors := []clash.Selector{{Name: "proxy", All: []string{"old"}, Now: "old"}}
 	a := &App{
-		source:    config.ConfigSource{FilePath: path, JSONText: `{"old":true}`},
+		source:    config.ConfigSource{FilePath: path},
 		config:    oldConfig,
 		selectors: oldSelectors,
 	}
@@ -97,7 +98,7 @@ func TestRestartWithConfigKeepsOldStateWhenPreflightFails(t *testing.T) {
 	if err := a.restartWithConfig(false, false); err == nil {
 		t.Fatal("invalid configuration unexpectedly passed preflight")
 	}
-	if a.source.JSONText != `{"old":true}` || a.config.JSONWithoutTUN != oldConfig.JSONWithoutTUN {
+	if a.source.FilePath != path || a.config.JSONWithoutTUN != oldConfig.JSONWithoutTUN {
 		t.Fatalf("old config state changed after preflight failure: source=%#v config=%#v", a.source, a.config)
 	}
 	if got := a.Selectors(); len(got) != 1 || got[0].Now != "old" {
@@ -116,7 +117,7 @@ func TestRestartWithConfigKeepsRunningStateWhenSingBoxCheckFails(t *testing.T) {
 	oldSelectors := []clash.Selector{{Name: "proxy", All: []string{"old"}, Now: "old"}}
 	checkErr := errors.New("semantic configuration error")
 	a := &App{
-		source:    config.ConfigSource{FilePath: path, JSONText: `{"old":true}`},
+		source:    config.ConfigSource{FilePath: path},
 		config:    oldConfig,
 		selectors: oldSelectors,
 		configChecker: func(runtimeJSON string) error {
@@ -131,7 +132,7 @@ func TestRestartWithConfigKeepsRunningStateWhenSingBoxCheckFails(t *testing.T) {
 	if !errors.Is(err, checkErr) {
 		t.Fatalf("restartWithConfig() error = %v, want %v", err, checkErr)
 	}
-	if a.source.JSONText != `{"old":true}` || a.config.JSONWithoutTUN != oldConfig.JSONWithoutTUN {
+	if a.source.FilePath != path || a.config.JSONWithoutTUN != oldConfig.JSONWithoutTUN {
 		t.Fatalf("old config state changed after sing-box check failure: source=%#v config=%#v", a.source, a.config)
 	}
 	if got := a.Selectors(); len(got) != 1 || got[0].Now != "old" {
@@ -146,7 +147,7 @@ func TestTunPrivilegeFailureKeepsRunningCoreAndProxy(t *testing.T) {
 	privilegeErr := errors.New("missing core network capability")
 	a := &App{
 		options:       config.Options{SBDir: directory},
-		source:        config.ConfigSource{FilePath: path, JSONText: `{"old":true}`},
+		source:        config.ConfigSource{FilePath: path},
 		configChecker: func(string) error { return nil },
 		tunPrivilegeChecker: func(corePath string) error {
 			if corePath != filepath.Join(directory, platform.CoreExecutableName()) {
@@ -164,7 +165,7 @@ func TestTunPrivilegeFailureKeepsRunningCoreAndProxy(t *testing.T) {
 	if err := a.ToggleTun(true); !errors.Is(err, privilegeErr) {
 		t.Fatalf("ToggleTun() = %v, want %v", err, privilegeErr)
 	}
-	if a.tunActive || !a.proxyActive || a.source.JSONText != `{"old":true}` {
+	if a.tunActive || !a.proxyActive || a.source.FilePath != path {
 		t.Fatal("privilege failure changed the running configuration")
 	}
 }
@@ -344,7 +345,7 @@ func TestRestartWithConfigReconfiguresChangedProxyAddress(t *testing.T) {
 		configChecker: func(string) error { return nil },
 		supervisor:    core.NewSupervisor("", nil),
 		coreState:     func() core.State { return core.StateRunning },
-		coreStarter: func(runtimeJSON string) error {
+		coreStarter: func(_ context.Context, runtimeJSON string) error {
 			steps = append(steps, "start")
 			startedConfig = runtimeJSON
 			return nil
@@ -394,7 +395,7 @@ func TestRestartWithConfigTemporarilyRestoresSameProxyAddress(t *testing.T) {
 		configChecker: func(string) error { return nil },
 		supervisor:    core.NewSupervisor("", nil),
 		coreState:     func() core.State { return core.StateRunning },
-		coreStarter: func(string) error {
+		coreStarter: func(context.Context, string) error {
 			steps = append(steps, "start")
 			return nil
 		},
@@ -409,5 +410,153 @@ func TestRestartWithConfigTemporarilyRestoresSameProxyAddress(t *testing.T) {
 	}
 	if enabledPort != 1080 || !a.SystemProxyActive() {
 		t.Fatalf("proxy was not restored for the unchanged address: port=%d active=%v", enabledPort, a.SystemProxyActive())
+	}
+}
+
+// A reload cancelled while the preflight is still running must not start a core:
+// the caller has already given up, and a core started for it would outlive the
+// recovery that asked for it.
+func TestRestartWithConfigDoesNotStartCoreWhenCallerCancelsDuringPreflight(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	writeReloadSource(t, path, reloadConfigJSON)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := false
+	a := &App{
+		source: config.ConfigSource{FilePath: path},
+		configChecker: func(string) error {
+			cancel()
+			return nil
+		},
+		supervisor: core.NewSupervisor("", nil),
+		coreStarter: func(context.Context, string) error {
+			started = true
+			return nil
+		},
+	}
+	if err := a.restartWithConfigContext(ctx, false, false); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled reload error = %v, want context.Canceled", err)
+	}
+	if started {
+		t.Fatal("core was started for a reload whose caller already cancelled")
+	}
+	if a.config.JSONWithoutTUN != "" {
+		t.Fatalf("cancelled reload replaced the running config: %#v", a.config)
+	}
+}
+
+// The starter receives the caller's context, cancellation included: a reload that
+// is cancelled after the config swap must not start a core for a dead caller.
+func TestRestartWithConfigStarterSeesCallerCancellation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	writeReloadSource(t, path, reloadConfigJSON)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	oldConfig := config.SingBoxConfig{ProxyHost: "127.0.0.1", ProxyPort: 1080, JSONWithoutTUN: `{"old":true}`}
+	a := &App{
+		source:        config.ConfigSource{FilePath: path},
+		config:        oldConfig,
+		configChecker: func(string) error { return nil },
+		supervisor:    core.NewSupervisor("", nil),
+		coreStarter: func(startCtx context.Context, _ string) error {
+			cancel()
+			return startCtx.Err()
+		},
+	}
+	if err := a.restartWithConfigContext(ctx, false, false); !errors.Is(err, context.Canceled) {
+		t.Fatalf("reload error = %v, want context.Canceled from the starter", err)
+	}
+	if a.config.JSONWithoutTUN != oldConfig.JSONWithoutTUN {
+		t.Fatalf("cancelled start did not restore the previous config: %#v", a.config)
+	}
+}
+
+// A consumer that starts after the update already happened must still see it,
+// and two updates that coalesce must leave the latest selector state readable.
+func TestSelectorUpdatesCoalesceToLatestState(t *testing.T) {
+	a := &App{selectorUpdates: make(chan struct{}, 1)}
+	a.notifySelectorUpdates()
+	a.mu.Lock()
+	a.selectors = []clash.Selector{{Name: "proxy", All: []string{"old", "new"}, Now: "new"}}
+	a.mu.Unlock()
+	a.notifySelectorUpdates() // merged into the pending notification
+
+	select {
+	case <-a.SelectorUpdates():
+	default:
+		t.Fatal("a pending update was lost when the consumer had not started yet")
+	}
+	if got := a.Selectors(); len(got) != 1 || got[0].Now != "new" {
+		t.Fatalf("consumer did not observe the latest selector state: %#v", got)
+	}
+
+	a.mu.Lock()
+	a.selectors = []clash.Selector{{Name: "proxy", All: []string{"new", "later"}, Now: "later"}}
+	a.mu.Unlock()
+	a.notifySelectorUpdates()
+	select {
+	case <-a.SelectorUpdates():
+	default:
+		t.Fatal("no notification was delivered for the update after the consumer drained")
+	}
+	if got := a.Selectors(); len(got) != 1 || got[0].Now != "later" {
+		t.Fatalf("update after drain not readable: %#v", got)
+	}
+}
+
+// A failed reload restores the previous selector cache and must publish that
+// restoration, otherwise the menu keeps showing the selectors of the config that
+// never started.
+func TestFailedReloadPublishesRestoredSelectors(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	writeReloadSource(t, path, reloadConfigJSON)
+	oldSelectors := []clash.Selector{{Name: "proxy", All: []string{"old"}, Now: "old"}}
+	a := &App{
+		source:          config.ConfigSource{FilePath: path},
+		config:          config.SingBoxConfig{ProxyHost: "127.0.0.1", ProxyPort: 1080},
+		selectors:       oldSelectors,
+		selectorUpdates: make(chan struct{}, 1),
+		configChecker:   func(string) error { return nil },
+		supervisor:      core.NewSupervisor("", nil),
+		coreStarter: func(context.Context, string) error {
+			return errors.New("core refused the configuration")
+		},
+	}
+	if err := a.restartWithConfig(false, false); err == nil {
+		t.Fatal("failing core start unexpectedly reported success")
+	}
+	select {
+	case <-a.SelectorUpdates():
+	default:
+		t.Fatal("restored selectors were not published after a failed reload")
+	}
+	if got := a.Selectors(); len(got) != 1 || got[0].Now != "old" {
+		t.Fatalf("selectors were not restored after a failed reload: %#v", got)
+	}
+}
+
+// The TUN state must be settled before the selector notification goes out, so a
+// successful reload reports its final state to whoever reads it.
+func TestSuccessfulReloadPublishesFinalTunState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	writeReloadSource(t, path, reloadConfigJSON)
+	a := &App{
+		source:              config.ConfigSource{FilePath: path},
+		selectorUpdates:     make(chan struct{}, 1),
+		configChecker:       func(string) error { return nil },
+		supervisor:          core.NewSupervisor("", nil),
+		tunPrivilegeChecker: func(string) error { return nil },
+		coreStarter:         func(context.Context, string) error { return nil },
+	}
+	if err := a.restartWithConfig(true, false); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-a.SelectorUpdates():
+	default:
+		t.Fatal("successful reload did not publish its selectors")
+	}
+	if !a.TunActive() {
+		t.Fatal("selectors were published before the new TUN state was applied")
 	}
 }

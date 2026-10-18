@@ -189,6 +189,7 @@ func (a *App) restoreConfigSnapshot(snapshot configSnapshot) {
 	a.api = snapshot.api
 	a.selectors = cloneSelectors(snapshot.selectors)
 	a.mu.Unlock()
+	a.notifySelectorUpdates()
 }
 
 // restartWithConfig restarts the core in this process with the configuration
@@ -241,17 +242,16 @@ func (a *App) restartWithConfigContext(ctx context.Context, tun, requireTun bool
 	}
 	a.proxyMu.Unlock()
 	previous := a.applyConfigCandidate(candidate)
-	start := a.coreStarter
-	if start == nil {
-		start = a.supervisor.Start
-	}
-	if err := start(runtimeConfigFor(candidate.config, candidate.tun)); err != nil {
+	if err := a.startRuntimeConfig(ctx, runtimeConfigFor(candidate.config, candidate.tun)); err != nil {
 		a.restoreConfigSnapshot(previous)
 		return err
 	}
 	a.mu.Lock()
 	a.tunActive = candidate.tun
 	a.mu.Unlock()
+	// Publish once config and TUN state are both in place; a watcher re-reads both
+	// from the cache. The failure path published its own update above.
+	a.notifySelectorUpdates()
 	if proxyReenable {
 		if err := a.EnableSystemProxy(); err != nil {
 			return errors.Join(errors.New("enable system proxy for new configuration"), err)

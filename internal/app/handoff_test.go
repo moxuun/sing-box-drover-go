@@ -155,7 +155,7 @@ func newHandoffTestController(t *testing.T) *handoffTestController {
 		t.Error("a controller with a handoff transport used the one-shot launcher")
 		return nil
 	}
-	controller.coreStarter = func(string) error {
+	controller.coreStarter = func(context.Context, string) error {
 		controller.cores++
 		return nil
 	}

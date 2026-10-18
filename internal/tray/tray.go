@@ -690,15 +690,14 @@ func (t *Tray) publishMenu(selectors []clash.Selector) {
 }
 
 func (t *Tray) watchSelectorCache() {
-	cacheTicker := time.NewTicker(750 * time.Millisecond)
 	refreshTicker := time.NewTicker(30 * time.Second)
-	defer cacheTicker.Stop()
 	defer refreshTicker.Stop()
+	updates := t.controller.SelectorUpdates()
 	for {
 		select {
 		case <-t.done:
 			return
-		case <-cacheTicker.C:
+		case <-updates:
 			t.onMain(func() { t.publishMenu(t.controller.Selectors()) })
 		case <-refreshTicker.C:
 			t.enqueue(t.refreshSelectorsOnce)
@@ -709,9 +708,8 @@ func (t *Tray) watchSelectorCache() {
 func (t *Tray) refreshSelectorsOnce() {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	selectors, err := t.controller.RefreshSelectors(ctx)
-	if err != nil {
-		return
-	}
-	t.onMain(func() { t.publishMenu(selectors) })
+	// RefreshSelectors publishes the new list itself, so the watcher rebuilds from
+	// the notification instead of this call publishing a second time. A failed
+	// refresh keeps the cached list and retries on the next tick.
+	_, _ = t.controller.RefreshSelectors(ctx)
 }
