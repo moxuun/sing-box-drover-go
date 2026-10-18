@@ -204,3 +204,59 @@ func TestNativePopupRejectsInvalidTextAndReleasesResources(t *testing.T) {
 		}
 	}
 }
+
+func TestWithoutSelectorItemsKeepsRecoveryItems(t *testing.T) {
+	// Native menu command IDs are uint16, so a provider that expands past 0xffff
+	// nodes cannot be shown. The popup must still open with the items that carry
+	// no native ID, otherwise the only way out of a GUI build (Quit) disappears
+	// exactly when the user needs it.
+	items := []*mygo.MenuItem{
+		{ID: "proxy", Label: "System Proxy", Type: mygo.MenuItemCheckbox},
+		mygo.Separator(),
+		{ID: "selector:0:0", Label: "node-a", Type: mygo.MenuItemCheckbox},
+		{ID: "selector:0:1", Label: "node-b", Type: mygo.MenuItemCheckbox},
+		{Label: "flat group", Submenu: []*mygo.MenuItem{{ID: "selector:1:0", Label: "node-c"}}},
+		{Label: "plain group", Submenu: []*mygo.MenuItem{{ID: "nested", Label: "keep me"}}},
+		mygo.Separator(),
+		{ID: "autostart", Label: "Start with Windows", Type: mygo.MenuItemCheckbox},
+		{ID: "restart", Label: "Restart core"},
+		{ID: "homepage", Label: "Homepage"},
+		{ID: "quit", Label: "Quit"},
+	}
+	kept := withoutSelectorItems(items)
+	// The plain group carries no ID of its own, so match the entries by label.
+	want := []string{"System Proxy", "", "plain group", "", "Start with Windows", "Restart core", "Homepage", "Quit"}
+	if len(kept) != len(want) {
+		t.Fatalf("withoutSelectorItems kept %d items, want %d", len(kept), len(want))
+	}
+	for i, item := range kept {
+		if item.Label != want[i] {
+			t.Fatalf("item %d = %q, want %q", i, item.Label, want[i])
+		}
+	}
+	if containsSelectorItem(kept) {
+		t.Fatal("containsSelectorItem reported a selector in the filtered list")
+	}
+	// Quit must survive: it is the only exit in a console-less build.
+	if last := kept[len(kept)-1]; last.ID != "quit" {
+		t.Fatalf("fallback dropped the Quit item: %q", last.Label)
+	}
+	// A group whose children are all plain items stays intact.
+	for _, item := range kept {
+		if item.Label == "plain group" {
+			if len(item.Submenu) != 1 || item.Submenu[0].ID != "nested" {
+				t.Fatalf("plain group was damaged: %+v", item.Submenu)
+			}
+			return
+		}
+	}
+	t.Fatal("plain group was dropped by the fallback")
+}
+
+func TestTooManyMenuItemsSentinelIsRecognisable(t *testing.T) {
+	// newNativePopupMenu recovers only from this sentinel; a plain errors.New in
+	// build would silently stop the fallback from ever running.
+	if !strings.Contains(errTooManyMenuItems.Error(), "too many native menu items") {
+		t.Fatalf("sentinel error = %q", errTooManyMenuItems)
+	}
+}

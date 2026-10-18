@@ -53,11 +53,15 @@ type Tray struct {
 	autostartItem    *mygo.MenuItem
 	menuFingerprint  string
 	autostartEnabled bool
-	fault            bool
-	iconKind         trayIconKind
-	tooltip          string
-	menuError        string
-	runErr           error
+	// fault is the tray-level error shown by the icon: either the core failed or
+	// the menu could not be built. coreFault remembers which of the two it is, so
+	// a recovered menu does not clear an error the core is still in.
+	fault     bool
+	coreFault bool
+	iconKind  trayIconKind
+	tooltip   string
+	menuError string
+	runErr    error
 
 	// Controller actions run serially, without blocking native callbacks.
 	actions       chan func()
@@ -640,8 +644,10 @@ func (t *Tray) watchEvents() {
 			}
 			t.onMain(func() {
 				if event.State == core.StateRunning {
+					t.coreFault = false
 					t.fault = false
 				} else if event.Kind == core.EventError || event.State == core.StateFailed {
+					t.coreFault = true
 					t.fault = true
 				}
 				t.refreshIcon()
@@ -661,8 +667,15 @@ func (t *Tray) publishMenu(selectors []clash.Selector) {
 			t.menuError = message
 			t.notify(message)
 		}
-	} else {
-		t.menuError = ""
+		return
+	}
+	t.menuError = ""
+	// A menu that builds again means the condition that turned the icon red is
+	// gone. Leaving fault set would keep reporting an error the user already
+	// recovered from, until the next core restart happened to clear it.
+	if t.fault && !t.coreFault {
+		t.fault = false
+		t.refreshIcon()
 	}
 }
 

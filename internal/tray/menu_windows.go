@@ -49,6 +49,10 @@ type nativePopupMenu struct {
 	bitmaps map[selectorBitmapKey]uintptr
 }
 
+// errTooManyMenuItems reports that the selector list alone exhausted the uint16
+// native command IDs. It is the only build failure the popup may recover from.
+var errTooManyMenuItems = errors.New("too many native menu items")
+
 func newNativePopupMenu(menu *mygo.Menu) (*nativePopupMenu, error) {
 	if menu == nil {
 		return nil, errors.New("tray menu is unavailable")
@@ -58,9 +62,68 @@ func newNativePopupMenu(menu *mygo.Menu) (*nativePopupMenu, error) {
 	p.menu, err = p.build(menu.Items())
 	if err != nil {
 		p.close()
-		return nil, err
+		// A selector list that exhausted the native command IDs must not cost the
+		// user the whole popup: Windows GUI builds have no console, so the menu is
+		// the only way to reach Quit. Drop only the selector entries and keep every
+		// control needed to recover. Any other build failure is a real defect and
+		// still fails: silently showing a partial menu would hide it.
+		if !errors.Is(err, errTooManyMenuItems) {
+			return nil, err
+		}
+		if fallbackErr := p.buildWithoutSelectors(menu.Items()); fallbackErr != nil {
+			p.close()
+			return nil, errors.Join(err, fallbackErr)
+		}
 	}
 	return p, nil
+}
+
+// withoutSelectorItems returns the items that carry no native command ID. Native
+// menu IDs are uint16, so a provider that expands to more than 0xffff nodes can
+// exhaust them; dropping the selector entries keeps every control the user needs
+// to recover, and the failure is still reported through the tray icon.
+func withoutSelectorItems(items []*mygo.MenuItem) []*mygo.MenuItem {
+	kept := make([]*mygo.MenuItem, 0, len(items))
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if strings.HasPrefix(item.ID, "selector:") {
+			continue
+		}
+		// A group whose children are selector entries cannot be kept: its children
+		// are exactly the items that ran out of native IDs.
+		if item.Submenu != nil && containsSelectorItem(item.Submenu) {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	return kept
+}
+
+// buildWithoutSelectors rebuilds the popup without the selector entries.
+func (p *nativePopupMenu) buildWithoutSelectors(items []*mygo.MenuItem) error {
+	menu, err := p.build(withoutSelectorItems(items))
+	if err != nil {
+		return err
+	}
+	p.menu = menu
+	return nil
+}
+
+// containsSelectorItem reports whether a submenu holds selector entries. Such a
+// group cannot be kept in the fallback: its children are the items that ran out
+// of native IDs.
+func containsSelectorItem(items []*mygo.MenuItem) bool {
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		if strings.HasPrefix(item.ID, "selector:") || containsSelectorItem(item.Submenu) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *nativePopupMenu) build(items []*mygo.MenuItem) (menu uintptr, err error) {
@@ -109,8 +172,8 @@ func (p *nativePopupMenu) build(items []*mygo.MenuItem) (menu uintptr, err error
 			}
 			continue
 		}
-		if len(p.items) == 0xffff {
-			return menu, errors.New("too many native menu items")
+		if len(p.items) >= 0xffff {
+			return menu, errTooManyMenuItems
 		}
 		// Keep the displayed items alive even if a refresh replaces t.menu
 		// while TrackPopupMenuEx dispatches queued MyGo callbacks.
