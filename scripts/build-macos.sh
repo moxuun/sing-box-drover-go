@@ -16,7 +16,7 @@ if [[ ! "$MACOS_MIN_VERSION" =~ ^([0-9]+)\.([0-9]+)(\.[0-9]+)?$ ]] || [[ "${BASH
 	echo "Go 1.27 requires macOS 13.0 or newer" >&2
 	exit 1
 fi
-export GOTOOLCHAIN=go1.27.1
+export GOTOOLCHAIN=go1.27.2
 APP_CONTENTS="$APP/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_RESOURCES="$APP_CONTENTS/Resources"

@@ -3,10 +3,10 @@
 ## 当前 mygo 三端迁移
 
 - `已完成` 使用 mygo v0.4.8 共享 Windows、macOS 和 Linux 托盘、菜单、通知、Shell 与休眠恢复，删除旧 Win32 托盘、systray 和 Objective-C 唤醒桥接。
-- `已完成` 工具链固定 Go 1.27.1，三端构建均使用带版本及源码哈希校验的 overlay 规避 [golang/go#81956](https://github.com/golang/go/issues/81956)，自动下载的工具链会先复制到模块缓存外。
+- `已完成` 工具链固定 Go 1.27.2，三端构建均使用带版本及源码哈希校验的 overlay 规避 [golang/go#81956](https://github.com/golang/go/issues/81956)，自动下载的工具链会先复制到模块缓存外。
 - `已完成` Linux 增加单实例、重启交接、XDG 自启动、GNOME 代理与 sing-box 的 TUN 权限检查；平台适配仍放在 `internal/windows`，保留现有导入。
 - `已完成` 本地 Linux 全量测试、vet、五种目标编译通过；三端 overlay 均生效（Windows PE `.data` VirtualSize 减少约 32 MiB，Linux amd64 `.noptrbss` 与 macOS `__noptrbss` 降至约 128 KiB / 58 KiB）。构建、限制及完整验证记录见 [mygo 迁移记录](mygo-migration.md)。
-- `待实机验证` Windows 私有提交内存、三端托盘交互、自启动、提权、GNOME 代理、TUN 和休眠恢复；macOS Universal 打包与签名仍需在 macOS 上运行，远端 CI 尚未执行。
+- `待实机验证` Windows 私有提交内存、三端托盘交互、自启动、提权、GNOME 代理、TUN 和休眠恢复；macOS Universal 打包与签名仍需在 macOS 上运行。
 
 以下有日期的实测属于历史记录；原 Win32/GDI 和 Go 1.25 的结论不作为当前 mygo 版本的验证结果。
 
@@ -121,13 +121,13 @@
 - `已完成` 托盘菜单遇到无法编码的节点名、分组标题、分隔线或底部操作项时报错并销毁不完整菜单，不再留下失配的命令映射或 GDI 资源。
 - `待实机验证` 2026-09-16 观察到跨 S0 Modern Standby 运行时首次打开菜单偶发缺少 Selector 的复合勾选/国旗位图（再次打开自行恢复）；现已改为直接写入 DIB 像素、GDI 勾选绘制后执行 `GdiFlush` 并规范化 alpha，自动测试通过，真实睡眠唤醒循环和 Start11 启用/停用仍待确认。
 - `待实机验证` 图标颜色、tooltip 和取消系统代理/TUN 后的状态需要在真实托盘中确认，自动化测试不能替代视觉检查。
-- `已完成` 正式构建使用 `scripts/build.ps1`（Go 1.27.1、内存 overlay、应用图标和 manifest）、`scripts/build-macos.sh`（纯 Go Universal `.app`）和 `scripts/build-linux.sh`（amd64/arm64），后两者共用 `scripts/go-overlay.sh`。
+- `已完成` 正式构建使用 `scripts/build.ps1`（Go 1.27.2、内存 overlay、应用图标和 manifest）、`scripts/build-macos.sh`（纯 Go Universal `.app`）和 `scripts/build-linux.sh`（amd64/arm64），后两者共用 `scripts/go-overlay.sh`。
 - `已完成` GitHub Actions 在推送 `v*` 标签时跑格式检查、测试、`go vet` 并打包产物，由独立任务创建 GitHub Release；该任务不再检出仓库后曾报 `failed to run git: fatal: not a git repository`，现已显式设置 `GH_REPO: ${{ github.repository }}`。
 - `已完成` `v0.1.1` 至 `v0.1.5` 的远程发布工作流均已成功，标签构建与 GitHub Release 链路已实际验证。
 - `已完成` 持续集成在 Windows、macOS 和 Linux runner 上执行格式检查、全量测试、`go vet` 和构建；发布工作流生成三端产物。
 - `已完成` `scripts/build.ps1` 保存并恢复 `GOTOOLCHAIN`、`GOROOT`、`GOOS`、`GOARCH`、`CGO_ENABLED` 和 `GOFIPS140`，并清理临时资源文件。
 - `待实机验证` 正式构建仍需在运行中的旧 EXE 场景核对目标替换结果、构建信息和是否遗留 `.exe~`；脚本不会强制结束用户正在运行的程序。
-- `已完成` mygo 迁移将 Go 基线更新为 1.27.1；三端共用的 32 MiB 静态缓冲区使用受源码哈希约束的 overlay 按需分配。
+- `已完成` mygo 迁移将 Go 基线更新为 1.27.1，随后升级到 1.27.2；三端共用的 32 MiB 静态缓冲区使用受源码哈希约束的 overlay 按需分配（两个版本的该源文件逐字节相同）。
 - `已完成` README 的 4–8 MiB 说明已标注为 Go 1.25.6 的历史样本，不再作为当前版本的性能承诺。
 - `待实机验证` Go 1.25.14 与旧 1.25.6 的内存和完整托盘生命周期尚未做同一条件对比，结论仍需真实 Windows 复测。
 - `待实机验证` 2026-09-12 对当时运行的 Go 1.25.6 产物连续采样约为 30.2 MiB Working Set、19.3 MiB Private Memory、406 handles，与 README 的 4–8 MiB 截图不一致；该产物构建信息指向 `v0.1.5+dirty`，需要用当前提交的正式构建冷启动后按相同口径复测，不能据此认定代码回归或继续沿用旧宣传值。
@@ -168,7 +168,7 @@
 托盘控制器不内置 sing-box 内核。Windows 构建：
 
 ```powershell
-$env:GOTOOLCHAIN = "go1.27.1"
+$env:GOTOOLCHAIN = "go1.27.2"
 go test ./...
 go vet ./...
 .\scripts\build.ps1
@@ -182,8 +182,8 @@ Windows 构建脚本使用固定版本的 Go 资源生成器，把 `resources/ap
 macOS 构建需要 `lipo` 和 `codesign`，不再需要 CGO：
 
 ```bash
-GOTOOLCHAIN=go1.27.1 go test ./...
-GOTOOLCHAIN=go1.27.1 go vet ./...
+GOTOOLCHAIN=go1.27.2 go test ./...
+GOTOOLCHAIN=go1.27.2 go vet ./...
 VERSION=dev ./scripts/build-macos.sh
 ```
 
@@ -244,18 +244,19 @@ lsof -nP -iTCP -sTCP:LISTEN | grep sing-box
 内核文件。普通权限验证通过后，再单独测试管理员提权、系统代理、TUN、
 LaunchAgent 和睡眠唤醒。
 
-`go.mod` 固定 Go 1.27.1，构建脚本也显式选择该工具链。三端构建都不要绕过
+`go.mod` 固定 Go 1.27.2，构建脚本也显式选择该工具链。三端构建都不要绕过
 `build-linux.sh`/`build-macos.sh`/`build.ps1` 的 overlay；自动下载工具链位于模块缓存时，脚本会复制一份到
-`output/.toolchains/go1.27.1` 后编译。overlay 的键必须与构建使用的 GOROOT
+`output/.toolchains/go1.27.2` 后编译。overlay 的键必须与构建使用的 GOROOT
 一致，否则 Go 会静默忽略替换并产出 32 MiB 二进制；shell 脚本会在生成后校验。
 
 ## Go 版本和内存
 
-Go 1.27.1 的 FIPS 熵源仍含 32 MiB 静态缓冲区，该缓冲区按 `//go:build !wasm`
+Go 1.27.2 的 FIPS 熵源仍含 32 MiB 静态缓冲区，该缓冲区按 `//go:build !wasm`
 编译，不限于 Windows；Linux 和 macOS 实测同样存在。三端 overlay 均改为按需分配。
-本次同条件比较：Windows PE `.data` VirtualSize 从 `0x20B6320` 降为 `0xB6310`；
+迁移时（Go 1.27.1）的同条件比较：Windows PE `.data` VirtualSize 从 `0x20B6320` 降为 `0xB6310`；
 Linux amd64 `.noptrbss` 从 `0x2020320` 降为 `0x020320`；macOS arm64/amd64
-`__noptrbss` 从约 32.06 MiB 降为约 58 KiB。
+`__noptrbss` 从约 32.06 MiB 降为约 58 KiB。升级到 1.27.2 后只重测了 Linux
+（`.noptrbss` 仍为 `0x020320`），Windows 与 macOS 的 1.27.2 产物尚未重测。
 
 这证明静态占用被移除。Linux 与 macOS 按需分页，未触碰时不占常驻内存；Windows
 真实私有提交内存和工作集仍需 Windows 实测。

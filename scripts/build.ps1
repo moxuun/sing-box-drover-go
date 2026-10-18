@@ -29,20 +29,20 @@ try {
     Push-Location -LiteralPath $Root
     $LocationPushed = $true
     New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
-    $env:GOTOOLCHAIN = "go1.27.1"
+    $env:GOTOOLCHAIN = "go1.27.2"
     $env:GOOS = "windows"
     $env:GOARCH = "amd64"
     $env:CGO_ENABLED = "0"
 
     $GoEnvironment = @(& go env GOROOT GOMODCACHE)
     if ($LASTEXITCODE -ne 0 -or $GoEnvironment.Count -ne 2) {
-        throw "Failed to locate the Go 1.27.1 toolchain"
+        throw "Failed to locate the Go 1.27.2 toolchain"
     }
     $GoRoot = [System.IO.Path]::GetFullPath($GoEnvironment[0])
     $ModuleCache = [System.IO.Path]::GetFullPath($GoEnvironment[1]).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
     if ($GoRoot.StartsWith($ModuleCache + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
         # Go rejects overlays beneath GOMODCACHE, including downloaded toolchains.
-        $StandaloneRoot = Join-Path $Root "output\.toolchains\go1.27.1"
+        $StandaloneRoot = Join-Path $Root "output\.toolchains\go1.27.2"
         if (-not (Test-Path -LiteralPath $StandaloneRoot)) {
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $StandaloneRoot) | Out-Null
             Copy-Item -LiteralPath $GoRoot -Destination $StandaloneRoot -Recurse

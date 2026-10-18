@@ -38,7 +38,7 @@ Linux TUN 要求 sing-box 具有 `CAP_NET_ADMIN`。控制器会在启动或替�
 
 ## 从源码构建
 
-固定工具链为 **Go 1.27.1**，mygo 为 **v0.4.8**。
+固定工具链为 **Go 1.27.2**，mygo 为 **v0.4.8**（其 `go.mod` 要求 Go 1.27.1，1.27.2 满足要求）。
 
 ```powershell
 # Windows：包含应用图标、manifest 和 Go 内存问题的 overlay
@@ -56,17 +56,17 @@ Linux TUN 要求 sing-box 具有 `CAP_NET_ADMIN`。控制器会在启动或替�
 已有测试与静态检查：
 
 ```bash
-GOTOOLCHAIN=go1.27.1 go test ./...
-GOTOOLCHAIN=go1.27.1 go vet ./...
+GOTOOLCHAIN=go1.27.2 go test ./...
+GOTOOLCHAIN=go1.27.2 go vet ./...
 ```
 
 三端 CI 使用同一工具链；标签发布生成 Windows ZIP、macOS Universal ZIP 和 Linux 两种架构的 tar.gz。详细构建及验证记录见[开发说明](docs/dev_note.md)。
 
 ## Go 版本和内存
 
-Go 1.27.1 仍受 [golang/go#81956](https://github.com/golang/go/issues/81956) 影响：FIPS 熵源的 32 MiB 静态缓冲区会增加 Windows 私有提交内存。Windows 构建脚本使用校验版本及源码哈希的 overlay，将缓冲区改为按需分配，并保持 FIPS 关闭。升级 Go 时需要先复核该补丁。
+Go 1.27.2 仍受 [golang/go#81956](https://github.com/golang/go/issues/81956) 影响：FIPS 熵源的 32 MiB 静态缓冲区会增加 Windows 私有提交内存。Windows 构建脚本使用校验版本及源码哈希的 overlay，将缓冲区改为按需分配，并保持 FIPS 关闭。升级 Go 时需要先复核该补丁。
 
-本次 Windows 构建比较确认补丁移除了 PE 数据段中的约 32 MiB 静态占用。真实工作集、私有提交内存及各桌面的完整交互还需要实机验证。历史内存截图和菜单截图不作为当前 mygo 版本的性能或外观保证。
+Go 1.27.1 时的 Windows 构建比较确认补丁移除了 PE 数据段中的约 32 MiB 静态占用；1.27.2 只验证了目标源文件哈希一致、overlay 已应用到 Linux 构建，Windows 与 macOS 产物未在 1.27.2 下重测。真实工作集、私有提交内存及各桌面的完整交互还需要实机验证。历史内存截图和菜单截图不作为当前 mygo 版本的性能或外观保证。
 
 ## 相关文档
 

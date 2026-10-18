@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prepares the golang/go#81956 memory workaround for Go 1.27.1 builds.
+# Prepares the golang/go#81956 memory workaround for Go 1.27.2 builds.
 #
 # Source this file, then call prepare_go_overlay <repo-root>. It resolves the
 # toolchain, generates the overlay, and exports GO_BINARY, GO_OVERLAY_FILE and
@@ -14,12 +14,12 @@ prepare_go_overlay() {
 	goroot="$(go env GOROOT)"
 	modcache="$(go env GOMODCACHE)"
 	if [[ -z "$goroot" || -z "$modcache" ]]; then
-		echo "Failed to locate the Go 1.27.1 toolchain" >&2
+		echo "Failed to locate the Go 1.27.2 toolchain" >&2
 		return 1
 	fi
 	# Go rejects overlays beneath GOMODCACHE, including downloaded toolchains.
 	if [[ "$goroot" == "$modcache"/* ]]; then
-		local standalone="$root/output/.toolchains/go1.27.1"
+		local standalone="$root/output/.toolchains/go1.27.2"
 		if [[ ! -d "$standalone" ]]; then
 			mkdir -p "$(dirname "$standalone")"
 			cp -R "$goroot" "$standalone"

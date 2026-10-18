@@ -15,12 +15,12 @@ import (
 )
 
 const (
-	toolchainVersion = "go1.27.1"
+	toolchainVersion = "go1.27.2"
 	originalSHA256   = "bd3c834a29e31c93e56d81da54d4a874561814a86550de1456c8d6d40a9c5fda"
 )
 
 func main() {
-	goroot := flag.String("goroot", runtime.GOROOT(), "GOROOT of the Go 1.27.1 build toolchain")
+	goroot := flag.String("goroot", runtime.GOROOT(), "GOROOT of the Go 1.27.2 build toolchain")
 	output := flag.String("output", "output/.go-overlay/overlay.json", "generated overlay file")
 	flag.Parse()
 	if err := generate(*goroot, *output); err != nil {

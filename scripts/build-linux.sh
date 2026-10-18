@@ -10,7 +10,7 @@ case "$OUTPUT" in
 	*) BINARY="$ROOT/$OUTPUT" ;;
 esac
 
-export GOTOOLCHAIN=go1.27.1
+export GOTOOLCHAIN=go1.27.2
 ARCH="${GOARCH:-$(go env GOARCH)}"
 case "$ARCH" in
 	amd64|arm64) ;;
