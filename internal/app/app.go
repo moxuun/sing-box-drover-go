@@ -842,24 +842,11 @@ func (a *App) Restart() error {
 	if err := a.ensureOpen(); err != nil {
 		return err
 	}
-	// Start a replacement controller so repeated restarts do not retain the
-	// old controller's Go heap and runtime resources.
-	tun := a.TunActive()
-	if tun {
-		if err := a.checkTunPrivileges(); err != nil {
-			return err
-		}
-	}
-	if _, err := a.checkReplacementCandidate(context.Background(), tun, false); err != nil {
-		return err
-	}
-	flags := "-restart" + handoffTunFlags(tun)
-	// wantProxy stays false: the handoff state comes from the restore result
-	// inside launchReplacement, not from a pre-restore SystemProxyActive(). That
-	// value stays true even when the restore abandoned the settings because the
-	// user changed them externally, and the replacement would then overwrite the
-	// user's settings again.
-	return a.launchReplacement(flags, platform.IsProcessElevated(), false)
+	// Restart the core in this process. Replacing the controller only to reclaim
+	// its Go heap made the tray and core handover observable: a replacement built
+	// its own tray before this one exited. Startup options are read once at
+	// launch, so an edited INI still needs a full controller restart.
+	return a.restartWithConfig(a.TunActive(), false)
 }
 
 // resumeProbeEndedRecovery reports whether a failed resume probe should stop

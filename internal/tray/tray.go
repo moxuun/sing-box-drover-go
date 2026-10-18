@@ -568,24 +568,9 @@ func (t *Tray) refreshAutostart() {
 }
 
 func (t *Tray) restart() {
-	// The replacement creates its tray before confirming the handoff.
-	t.onMain(func() {
-		if t.native != nil {
-			t.native.Destroy()
-			t.native = nil
-		}
-	})
-	if err := t.controller.Restart(); err != nil {
-		var trayErr error
-		t.onMain(func() { trayErr = t.createNativeTray() })
-		if trayErr != nil {
-			t.startupFailed(errors.Join(err, trayErr))
-			return
-		}
-		t.report(err)
-		return
-	}
-	t.shutdown()
+	// Restarting the core keeps this process and its tray, so nothing here has to
+	// be torn down and rebuilt around the operation.
+	t.report(t.controller.Restart())
 }
 
 func openURL(value string) error {

@@ -806,7 +806,7 @@ func TestResumeProbeEndedRecovery(t *testing.T) {
 	}
 }
 
-func TestRestartHandoffPreservesFeatureState(t *testing.T) {
+func TestRestartPreservesFeatureState(t *testing.T) {
 	tests := []struct {
 		name  string
 		tun   bool
@@ -823,19 +823,21 @@ func TestRestartHandoffPreservesFeatureState(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.json")
 			writeReloadSource(t, path, reloadConfigJSON)
 
-			launched := ""
+			started := ""
 			privilegesChecked := false
 			controller := &App{
 				source:        config.ConfigSource{FilePath: path},
 				configChecker: func(string) error { return nil },
+				supervisor:    core.NewSupervisor("", nil),
 				tunPrivilegeChecker: func(string) error {
 					privilegesChecked = true
 					return nil
 				},
-				selfLauncher: func(flags string, elevated bool) error {
-					launched = flags
+				coreStarter: func(runtimeJSON string) error {
+					started = runtimeJSON
 					return nil
 				},
+				coreState: func() core.State { return core.StateRunning },
 			}
 			controller.tunActive = test.tun
 			controller.proxyActive = test.proxy
@@ -849,24 +851,19 @@ func TestRestartHandoffPreservesFeatureState(t *testing.T) {
 			if err := controller.Restart(); err != nil {
 				t.Fatalf("Restart() error = %v", err)
 			}
-			if launched == "" {
-				t.Fatal("Restart() did not launch a replacement controller")
+			if started == "" {
+				t.Fatal("Restart() did not start the core")
 			}
 			if privilegesChecked != test.tun {
 				t.Fatalf("TUN privileges checked = %v, want %v", privilegesChecked, test.tun)
 			}
-
-			// The replacement parses this command line and re-derives both
-			// features from it. The configuration asks for both, so only an
-			// explicit handoff choice can keep them as the user left them.
-			parsed := ParseFlags(strings.Fields(launched))
-			startupConfig := config.SingBoxConfig{HasTunInbound: true}
-			startupOptions := config.Options{TunStartMode: "on", SystemProxyAuto: true}
-			if got := startupTunRequested(startupConfig, startupOptions, parsed); got != test.tun {
-				t.Fatalf("replacement would start with tun=%v, want %v (flags %q)", got, test.tun, launched)
+			// Restarting in this process keeps the feature state it was called with
+			// instead of re-deriving it from a replacement's command line.
+			if got := controller.TunActive(); got != test.tun {
+				t.Fatalf("tun after restart = %v, want %v", got, test.tun)
 			}
-			if got := startupProxyRequested(startupOptions, parsed); got != test.proxy {
-				t.Fatalf("replacement would start with proxy=%v, want %v (flags %q)", got, test.proxy, launched)
+			if got := controller.SystemProxyActive(); got != test.proxy {
+				t.Fatalf("system proxy after restart = %v, want %v", got, test.proxy)
 			}
 		})
 	}
