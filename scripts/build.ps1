@@ -1,5 +1,5 @@
 param(
-    [string]$OutputPath = "output\sing-box-dover-go.exe"
+    [string]$OutputPath = "output\sing-box-drover.exe"
 )
 
 $ErrorActionPreference = "Stop"

@@ -8,7 +8,7 @@
 
 | 文件                    | 说明                                                           |
 | ----------------------- | -------------------------------------------------------------- |
-| `sing-box-dover-go.exe` | 控制器本体；macOS 为 `sing-box-drover.app`，Linux 为 `sing-box-drover` |
+| `sing-box-drover.exe`   | 控制器本体；macOS 为 `sing-box-drover.app`，Linux 为 `sing-box-drover` |
 | `sing-box.exe`          | sing-box 内核；macOS/Linux 为 `sing-box`，需自行准备 |
 | `config.json`           | 你的 sing-box 配置文件（必须是已能正常工作的配置）             |
 | `sing-box-drover.ini`   | 控制器设置文件（压缩包内已自带默认配置）                       |
